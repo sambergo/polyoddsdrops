@@ -1,0 +1,14 @@
+.venv
+.git
+.gitignore
+.ruff_cache
+__pycache__
+*.pyc
+data/
+ui/node_modules
+ui/dist
+docs/
+scripts/
+.env
+*.md
+.claude/
