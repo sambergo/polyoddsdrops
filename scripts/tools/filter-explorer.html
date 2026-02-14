@@ -1,0 +1,494 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Polydrop Filter Explorer</title>
+<style>
+  :root {
+    --bg: #0f1117;
+    --surface: #1a1d27;
+    --border: #2a2d3a;
+    --text: #e1e4ed;
+    --text-muted: #8b8fa3;
+    --accent: #6366f1;
+    --accent-dim: #4f46e5;
+    --green: #22c55e;
+    --red: #ef4444;
+    --yellow: #eab308;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    line-height: 1.5;
+  }
+  .container { max-width: 1400px; margin: 0 auto; padding: 20px; }
+  h1 { font-size: 1.5rem; font-weight: 600; margin-bottom: 4px; }
+  .subtitle { color: var(--text-muted); font-size: 0.85rem; margin-bottom: 20px; }
+
+  /* Controls */
+  .controls {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 20px;
+    margin-bottom: 16px;
+  }
+  .controls-header {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    margin-bottom: 16px;
+    flex-wrap: wrap;
+  }
+  .file-info { color: var(--text-muted); font-size: 0.8rem; }
+
+  .filters-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+    gap: 14px;
+  }
+  .filter-item {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
+  .filter-item label {
+    font-size: 0.8rem;
+    color: var(--text-muted);
+    font-weight: 500;
+  }
+  .filter-row {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+  }
+  .filter-row input[type="range"] {
+    flex: 1;
+    accent-color: var(--accent);
+    height: 4px;
+  }
+  .filter-row input[type="number"] {
+    width: 80px;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    color: var(--text);
+    padding: 4px 8px;
+    border-radius: 4px;
+    font-size: 0.85rem;
+    text-align: right;
+  }
+  .filter-row input[type="number"]:focus {
+    outline: 1px solid var(--accent);
+    border-color: var(--accent);
+  }
+
+  /* Sports checkboxes */
+  .sports-section { margin-top: 14px; }
+  .sports-section .section-label {
+    font-size: 0.8rem;
+    color: var(--text-muted);
+    font-weight: 500;
+    margin-bottom: 6px;
+  }
+  .sports-checks {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+  }
+  .sport-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    padding: 3px 10px;
+    border-radius: 14px;
+    font-size: 0.8rem;
+    cursor: pointer;
+    user-select: none;
+    transition: border-color 0.15s;
+  }
+  .sport-chip:has(input:checked) {
+    border-color: var(--accent);
+    background: rgba(99,102,241,0.12);
+  }
+  .sport-chip input { display: none; }
+  .sport-count { color: var(--text-muted); font-size: 0.75rem; }
+
+  /* Funnel */
+  .funnel {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 20px;
+    margin-bottom: 16px;
+  }
+  .funnel h2 { font-size: 1rem; margin-bottom: 12px; color: var(--text-muted); }
+  .funnel-step {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 6px 0;
+    font-size: 0.9rem;
+    font-variant-numeric: tabular-nums;
+  }
+  .funnel-step .arrow { color: var(--text-muted); font-size: 0.75rem; }
+  .funnel-step .step-name { flex: 1; }
+  .funnel-step .step-count { font-weight: 600; min-width: 50px; text-align: right; }
+  .funnel-step .step-rejected {
+    color: var(--red);
+    font-size: 0.8rem;
+    min-width: 100px;
+  }
+  .funnel-step .step-bar {
+    width: 200px;
+    height: 6px;
+    background: var(--bg);
+    border-radius: 3px;
+    overflow: hidden;
+  }
+  .funnel-step .step-bar-fill {
+    height: 100%;
+    background: var(--accent);
+    border-radius: 3px;
+    transition: width 0.2s;
+  }
+  .funnel-final {
+    margin-top: 8px;
+    padding-top: 8px;
+    border-top: 1px solid var(--border);
+    font-weight: 600;
+    color: var(--green);
+    font-size: 1rem;
+  }
+
+  /* Table */
+  .table-section {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    overflow: hidden;
+  }
+  .table-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 12px 20px;
+  }
+  .table-header h2 { font-size: 1rem; color: var(--text-muted); }
+  .table-count { font-size: 0.85rem; color: var(--text-muted); }
+  .table-wrap { overflow-x: auto; }
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.82rem;
+  }
+  th {
+    text-align: left;
+    padding: 8px 12px;
+    background: var(--bg);
+    color: var(--text-muted);
+    font-weight: 600;
+    font-size: 0.75rem;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    cursor: pointer;
+    user-select: none;
+    white-space: nowrap;
+    border-bottom: 1px solid var(--border);
+    position: sticky;
+    top: 0;
+  }
+  th:hover { color: var(--text); }
+  th .sort-arrow { margin-left: 4px; font-size: 0.7rem; }
+  td {
+    padding: 6px 12px;
+    border-bottom: 1px solid var(--border);
+    white-space: nowrap;
+    max-width: 300px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  tr:hover td { background: rgba(99,102,241,0.05); }
+  .num { text-align: right; font-variant-numeric: tabular-nums; }
+
+  /* Empty state */
+  .empty-state {
+    text-align: center;
+    padding: 60px 20px;
+    color: var(--text-muted);
+  }
+  .empty-state p { margin-bottom: 8px; }
+</style>
+</head>
+<body>
+<div class="container">
+  <h1>Polydrop Filter Explorer</h1>
+  <p class="subtitle">Visualize how each filter threshold affects the market pool</p>
+
+  <div class="controls">
+    <div class="controls-header">
+      <span class="file-info" id="file-info">Loading markets.json...</span>
+    </div>
+
+    <div class="filters-grid">
+      <div class="filter-item">
+        <label>Min Liquidity ($)</label>
+        <div class="filter-row">
+          <input type="range" id="sl-liquidity" min="0" max="100000" step="500" value="10000">
+          <input type="number" id="num-liquidity" min="0" max="100000" step="500" value="10000">
+        </div>
+      </div>
+      <div class="filter-item">
+        <label>Max Spread ($)</label>
+        <div class="filter-row">
+          <input type="range" id="sl-spread" min="0" max="1" step="0.01" value="0.10">
+          <input type="number" id="num-spread" min="0" max="1" step="0.01" value="0.10">
+        </div>
+      </div>
+      <div class="filter-item">
+        <label>Min Volume 24h ($)</label>
+        <div class="filter-row">
+          <input type="range" id="sl-volume" min="0" max="10000" step="50" value="100">
+          <input type="number" id="num-volume" min="0" max="10000" step="50" value="100">
+        </div>
+      </div>
+      <div class="filter-item">
+        <label>Min Price</label>
+        <div class="filter-row">
+          <input type="range" id="sl-min-price" min="0" max="1" step="0.01" value="0.05">
+          <input type="number" id="num-min-price" min="0" max="1" step="0.01" value="0.05">
+        </div>
+      </div>
+      <div class="filter-item">
+        <label>Max Price</label>
+        <div class="filter-row">
+          <input type="range" id="sl-max-price" min="0" max="1" step="0.01" value="0.95">
+          <input type="number" id="num-max-price" min="0" max="1" step="0.01" value="0.95">
+        </div>
+      </div>
+    </div>
+
+    <div class="sports-section">
+      <div class="section-label">Sports</div>
+      <div class="sports-checks" id="sports-checks"></div>
+    </div>
+  </div>
+
+  <div class="funnel" id="funnel">
+    <h2>Filter Funnel</h2>
+    <div id="funnel-steps"></div>
+  </div>
+
+  <div class="table-section">
+    <div class="table-header">
+      <h2>Passing Markets</h2>
+      <span class="table-count" id="table-count"></span>
+    </div>
+    <div class="table-wrap" style="max-height:600px;overflow-y:auto">
+      <table>
+        <thead id="thead"></thead>
+        <tbody id="tbody"></tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+<script src="markets.js"></script>
+<script>
+const COLUMNS = [
+  { key: 'event_title', label: 'Event', type: 'str' },
+  { key: 'question', label: 'Question', type: 'str' },
+  { key: 'outcome', label: 'Outcome', type: 'str' },
+  { key: 'sport', label: 'Sport', type: 'str' },
+  { key: 'price', label: 'Price', type: 'num', fmt: v => v?.toFixed(3) ?? '-' },
+  { key: 'liquidity', label: 'Liquidity', type: 'num', fmt: v => v != null ? '$' + v.toLocaleString(undefined, {maximumFractionDigits:0}) : '-' },
+  { key: 'spread', label: 'Spread', type: 'num', fmt: v => v != null ? '$' + v.toFixed(3) : '-' },
+  { key: 'volume_24h', label: 'Vol 24h', type: 'num', fmt: v => v != null ? '$' + v.toLocaleString(undefined, {maximumFractionDigits:0}) : '-' },
+  { key: 'market_type', label: 'Type', type: 'str' },
+  { key: 'line', label: 'Line', type: 'num', fmt: v => v != null ? v.toString() : '-' },
+];
+
+let allMarkets = [];
+let sortCol = 'liquidity';
+let sortAsc = false;
+
+// Bind slider <-> number input pairs
+function bindPair(sliderId, numId, onChange) {
+  const sl = document.getElementById(sliderId);
+  const num = document.getElementById(numId);
+  sl.addEventListener('input', () => { num.value = sl.value; onChange(); });
+  num.addEventListener('input', () => { sl.value = num.value; onChange(); });
+}
+bindPair('sl-liquidity', 'num-liquidity', update);
+bindPair('sl-spread', 'num-spread', update);
+bindPair('sl-volume', 'num-volume', update);
+bindPair('sl-min-price', 'num-min-price', update);
+bindPair('sl-max-price', 'num-max-price', update);
+
+// Load data from markets.js (included via <script> tag)
+if (typeof MARKETS_DATA !== 'undefined') {
+  allMarkets = MARKETS_DATA.markets || [];
+  const meta = MARKETS_DATA.metadata || {};
+  document.getElementById('file-info').textContent =
+    `${allMarkets.length} markets loaded (${meta.fetched_at?.slice(0,16) || 'unknown'})`;
+  buildSportsCheckboxes();
+  update();
+} else {
+  document.getElementById('file-info').textContent = 'markets.js not found — run: uv run scripts/dump_markets.py';
+}
+
+function buildSportsCheckboxes() {
+  const counts = {};
+  for (const m of allMarkets) {
+    counts[m.sport] = (counts[m.sport] || 0) + 1;
+  }
+  const container = document.getElementById('sports-checks');
+  container.innerHTML = '';
+  const sorted = Object.entries(counts).sort((a, b) => b[1] - a[1]);
+  for (const [sport, count] of sorted) {
+    const lbl = document.createElement('label');
+    lbl.className = 'sport-chip';
+    lbl.innerHTML = `<input type="checkbox" value="${sport}" checked>
+      ${sport} <span class="sport-count">(${count})</span>`;
+    lbl.querySelector('input').addEventListener('change', update);
+    container.appendChild(lbl);
+  }
+}
+
+function getFilters() {
+  const checks = document.querySelectorAll('#sports-checks input[type="checkbox"]');
+  const selectedSports = new Set();
+  checks.forEach(c => { if (c.checked) selectedSports.add(c.value); });
+  return {
+    minLiquidity: parseFloat(document.getElementById('num-liquidity').value) || 0,
+    maxSpread: parseFloat(document.getElementById('num-spread').value),
+    minVolume: parseFloat(document.getElementById('num-volume').value) || 0,
+    minPrice: parseFloat(document.getElementById('num-min-price').value) || 0,
+    maxPrice: parseFloat(document.getElementById('num-max-price').value) || 1,
+    selectedSports,
+  };
+}
+
+function runFunnel(markets, filters) {
+  const steps = [];
+  let pool = [...markets];
+  const total = pool.length;
+
+  // Step 1: Active & accepting orders
+  let next = pool.filter(m => m.active && !m.closed && m.accepting_orders);
+  steps.push({ name: 'Active & accepting orders', count: next.length, rejected: pool.length - next.length });
+  pool = next;
+
+  // Step 2: Liquidity
+  next = pool.filter(m => m.liquidity >= filters.minLiquidity);
+  steps.push({ name: `Liquidity >= $${filters.minLiquidity.toLocaleString()}`, count: next.length, rejected: pool.length - next.length });
+  pool = next;
+
+  // Step 3: Spread
+  next = pool.filter(m => m.spread != null && m.spread <= filters.maxSpread);
+  steps.push({ name: `Spread <= $${filters.maxSpread.toFixed(2)}`, count: next.length, rejected: pool.length - next.length });
+  pool = next;
+
+  // Step 4: Volume 24h
+  next = pool.filter(m => m.volume_24h >= filters.minVolume);
+  steps.push({ name: `Volume 24h >= $${filters.minVolume.toLocaleString()}`, count: next.length, rejected: pool.length - next.length });
+  pool = next;
+
+  // Step 5: Price range
+  next = pool.filter(m => m.price >= filters.minPrice && m.price <= filters.maxPrice);
+  steps.push({ name: `Price ${filters.minPrice.toFixed(2)} - ${filters.maxPrice.toFixed(2)}`, count: next.length, rejected: pool.length - next.length });
+  pool = next;
+
+  // Step 6: Selected sports
+  next = pool.filter(m => filters.selectedSports.has(m.sport));
+  steps.push({ name: 'Selected sports', count: next.length, rejected: pool.length - next.length });
+  pool = next;
+
+  return { steps, total, final: pool };
+}
+
+function renderFunnel(result) {
+  const container = document.getElementById('funnel-steps');
+  let html = `<div class="funnel-step">
+    <span class="step-name" style="font-weight:600">Total fetched</span>
+    <span class="step-count">${result.total}</span>
+    <span class="step-rejected"></span>
+    <div class="step-bar"><div class="step-bar-fill" style="width:100%"></div></div>
+  </div>`;
+
+  for (const step of result.steps) {
+    const pct = result.total > 0 ? (step.count / result.total * 100) : 0;
+    html += `<div class="funnel-step">
+      <span class="arrow">&#x2192;</span>
+      <span class="step-name">${step.name}</span>
+      <span class="step-count">${step.count}</span>
+      <span class="step-rejected">${step.rejected > 0 ? '(-' + step.rejected + ')' : ''}</span>
+      <div class="step-bar"><div class="step-bar-fill" style="width:${pct}%"></div></div>
+    </div>`;
+  }
+
+  html += `<div class="funnel-final">Final: ${result.final.length} markets</div>`;
+  container.innerHTML = html;
+}
+
+function renderTable(markets) {
+  // Sort
+  const col = COLUMNS.find(c => c.key === sortCol);
+  const sorted = [...markets].sort((a, b) => {
+    let va = a[sortCol], vb = b[sortCol];
+    if (va == null) va = col?.type === 'num' ? -Infinity : '';
+    if (vb == null) vb = col?.type === 'num' ? -Infinity : '';
+    if (col?.type === 'num') return sortAsc ? va - vb : vb - va;
+    return sortAsc ? String(va).localeCompare(String(vb)) : String(vb).localeCompare(String(va));
+  });
+
+  // Head
+  const thead = document.getElementById('thead');
+  thead.innerHTML = '<tr>' + COLUMNS.map(c => {
+    const arrow = c.key === sortCol ? (sortAsc ? ' &#9650;' : ' &#9660;') : '';
+    return `<th data-col="${c.key}" class="${c.type === 'num' ? 'num' : ''}">${c.label}<span class="sort-arrow">${arrow}</span></th>`;
+  }).join('') + '</tr>';
+
+  // Bind sort
+  thead.querySelectorAll('th').forEach(th => {
+    th.addEventListener('click', () => {
+      const col = th.dataset.col;
+      if (sortCol === col) sortAsc = !sortAsc;
+      else { sortCol = col; sortAsc = true; }
+      update();
+    });
+  });
+
+  // Body - limit to 500 rows for performance
+  const display = sorted.slice(0, 500);
+  const tbody = document.getElementById('tbody');
+  tbody.innerHTML = display.map(m => '<tr>' + COLUMNS.map(c => {
+    const val = m[c.key];
+    const formatted = c.fmt ? c.fmt(val) : (val ?? '-');
+    return `<td class="${c.type === 'num' ? 'num' : ''}" title="${String(val ?? '')}">${formatted}</td>`;
+  }).join('') + '</tr>').join('');
+
+  document.getElementById('table-count').textContent =
+    sorted.length > 500 ? `Showing 500 of ${sorted.length}` : `${sorted.length} markets`;
+}
+
+function update() {
+  if (allMarkets.length === 0) return;
+  const filters = getFilters();
+  const result = runFunnel(allMarkets, filters);
+  renderFunnel(result);
+  renderTable(result.final);
+}
+
+// Initial empty state
+document.getElementById('funnel-steps').innerHTML =
+  '<div class="empty-state"><p>Load a markets.json file to begin</p></div>';
+document.getElementById('tbody').innerHTML =
+  '<tr><td colspan="10" class="empty-state">No data loaded</td></tr>';
+</script>
+</body>
+</html>
