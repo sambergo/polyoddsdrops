@@ -197,16 +197,16 @@ class GammaClient:
 
     def __init__(
         self,
-        filter_config: MarketFilterConfig | None = None,
+        filter_config: MarketFilterConfig,
         hours_ahead: int = 48,
     ) -> None:
         """Initialize the Gamma API client.
 
         Args:
-            filter_config: Market filter configuration. Uses defaults if None.
+            filter_config: Market filter configuration.
             hours_ahead: How far ahead to look for upcoming games (default 48h).
         """
-        self.filter = filter_config or MarketFilterConfig()
+        self.filter = filter_config
         self.hours_ahead = hours_ahead
 
     def fetch_events_by_tag(self, tag_id: int, limit: int = 500) -> list[dict]:

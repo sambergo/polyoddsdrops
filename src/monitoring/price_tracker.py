@@ -25,13 +25,13 @@ class PriceTracker:
     update prices and check velocity across all tokens.
     """
 
-    def __init__(self, config: MonitoringConfig | None = None) -> None:
+    def __init__(self, config: MonitoringConfig) -> None:
         """Initialize the price tracker.
 
         Args:
-            config: Monitoring configuration. Uses defaults if None.
+            config: Monitoring configuration.
         """
-        self.config = config or MonitoringConfig()
+        self.config = config
         self._windows: dict[str, RollingWindow] = {}
         self._update_count = 0
 

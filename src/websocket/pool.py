@@ -19,10 +19,10 @@ class WebSocketPool:
 
     def __init__(
         self,
-        config: WebSocketConfig | None = None,
+        config: WebSocketConfig,
         on_message: MessageHandler | None = None,
     ) -> None:
-        self._config = config or WebSocketConfig()
+        self._config = config
         self._on_message = on_message
         self._clients: list[WebSocketClient] = []
         self._running = False

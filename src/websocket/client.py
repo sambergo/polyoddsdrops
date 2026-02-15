@@ -23,16 +23,16 @@ class WebSocketClient:
 
     def __init__(
         self,
-        config: WebSocketConfig | None = None,
+        config: WebSocketConfig,
         on_message: MessageHandler | None = None,
     ) -> None:
         """Initialize the WebSocket client.
 
         Args:
-            config: WebSocket configuration. Uses defaults if None.
+            config: WebSocket configuration.
             on_message: Async callback for received messages.
         """
-        self.config = config or WebSocketConfig()
+        self.config = config
         self.on_message = on_message
         self._ws: ClientConnection | None = None
         self._heartbeat_task: asyncio.Task | None = None
