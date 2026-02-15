@@ -96,10 +96,10 @@ interface FiltersProps {
   onMaxSpreadChange: (v: number) => void
   minVolume: number
   onMinVolumeChange: (v: number) => void
-  minPrice: number
-  onMinPriceChange: (v: number) => void
-  maxPrice: number
-  onMaxPriceChange: (v: number) => void
+  minOdds: number
+  onMinOddsChange: (v: number) => void
+  maxOdds: number
+  onMaxOddsChange: (v: number) => void
   showLive: boolean
   onShowLiveChange: (v: boolean) => void
   showHidden: boolean
@@ -132,10 +132,10 @@ export function Filters({
   onMaxSpreadChange,
   minVolume,
   onMinVolumeChange,
-  minPrice,
-  onMinPriceChange,
-  maxPrice,
-  onMaxPriceChange,
+  minOdds,
+  onMinOddsChange,
+  maxOdds,
+  onMaxOddsChange,
   showLive,
   onShowLiveChange,
   showHidden,
@@ -276,31 +276,31 @@ export function Filters({
           </div>
 
           <div className="filter-slider-group">
-            <label className="filter-slider-label">Min price</label>
+            <label className="filter-slider-label">Min odds</label>
             <input
               type="range"
-              min={0.01}
-              max={0.50}
-              step={0.01}
-              value={minPrice}
-              onChange={(e) => onMinPriceChange(Number(e.target.value))}
+              min={1.01}
+              max={5.0}
+              step={0.1}
+              value={minOdds}
+              onChange={(e) => onMinOddsChange(Number(e.target.value))}
               className="filter-range"
             />
-            <span className="filter-range-value">{(minPrice * 100).toFixed(0)}%</span>
+            <span className="filter-range-value">{minOdds.toFixed(1)}</span>
           </div>
 
           <div className="filter-slider-group">
-            <label className="filter-slider-label">Max price</label>
+            <label className="filter-slider-label">Max odds</label>
             <input
               type="range"
-              min={0.50}
-              max={0.99}
-              step={0.01}
-              value={maxPrice}
-              onChange={(e) => onMaxPriceChange(Number(e.target.value))}
+              min={2.0}
+              max={20.0}
+              step={0.5}
+              value={maxOdds}
+              onChange={(e) => onMaxOddsChange(Number(e.target.value))}
               className="filter-range"
             />
-            <span className="filter-range-value">{(maxPrice * 100).toFixed(0)}%</span>
+            <span className="filter-range-value">{maxOdds.toFixed(1)}</span>
           </div>
         </div>
       )}

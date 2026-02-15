@@ -14,8 +14,8 @@ interface NumericFilters {
   minLiquidity: number;
   maxSpread: number;
   minVolume: number;
-  minPrice: number;
-  maxPrice: number;
+  minOdds: number;
+  maxOdds: number;
 }
 
 function matchesFilter(
@@ -44,11 +44,10 @@ function matchesFilter(
   if (token.spread != null && token.spread > numeric.maxSpread) return false;
   if (token.volume_24h != null && token.volume_24h < numeric.minVolume)
     return false;
-  if (
-    token.mid_price != null &&
-    (token.mid_price < numeric.minPrice || token.mid_price > numeric.maxPrice)
-  )
-    return false;
+  if (token.mid_price != null && token.mid_price > 0) {
+    const odds = 1 / token.mid_price;
+    if (odds < numeric.minOdds || odds > numeric.maxOdds) return false;
+  }
   if (!showLive && token.game_start_time) {
     const d = new Date(token.game_start_time);
     if (!isNaN(d.getTime()) && d.getTime() <= Date.now()) return false;
@@ -101,8 +100,8 @@ export default function App() {
   const [minLiquidity, setMinLiquidity] = useState(10000);
   const [maxSpread, setMaxSpread] = useState(0.03);
   const [minVolume, setMinVolume] = useState(0);
-  const [minPrice, setMinPrice] = useState(0.15);
-  const [maxPrice, setMaxPrice] = useState(0.95);
+  const [minOdds, setMinOdds] = useState(1.1);
+  const [maxOdds, setMaxOdds] = useState(6.0);
   const [showLive, setShowLive] = useState(false);
   const [hiddenIds, setHiddenIds] = useState<Set<string>>(loadHiddenIds);
   const [showHidden, setShowHidden] = useState(false);
@@ -114,8 +113,8 @@ export default function App() {
       minLiquidity,
       maxSpread,
       minVolume,
-      minPrice,
-      maxPrice,
+      minOdds,
+      maxOdds,
     }),
     [
       moversOnly,
@@ -123,8 +122,8 @@ export default function App() {
       minLiquidity,
       maxSpread,
       minVolume,
-      minPrice,
-      maxPrice,
+      minOdds,
+      maxOdds,
     ],
   );
 
@@ -255,10 +254,10 @@ export default function App() {
         onMaxSpreadChange={setMaxSpread}
         minVolume={minVolume}
         onMinVolumeChange={setMinVolume}
-        minPrice={minPrice}
-        onMinPriceChange={setMinPrice}
-        maxPrice={maxPrice}
-        onMaxPriceChange={setMaxPrice}
+        minOdds={minOdds}
+        onMinOddsChange={setMinOdds}
+        maxOdds={maxOdds}
+        onMaxOddsChange={setMaxOdds}
         showLive={showLive}
         onShowLiveChange={setShowLive}
         showHidden={showHidden}
