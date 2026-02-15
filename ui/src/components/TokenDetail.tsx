@@ -95,7 +95,7 @@ export function TokenDetail({ token, priceHistory }: TokenDetailProps) {
             <dt>Price Change</dt>
             <dd>{token.price_change?.toFixed(4) ?? '—'}</dd>
             <dt>Pct Change</dt>
-            <dd>{token.pct_change != null ? `${(token.pct_change * 100).toFixed(2)}%` : '—'}</dd>
+            <dd>{token.pct_change != null ? `${token.pct_change.toFixed(2)}%` : '—'}</dd>
             <dt>Window</dt>
             <dd>
               {token.elapsed_seconds?.toFixed(0) ?? '—'}s / {token.observation_count ?? '—'} obs
