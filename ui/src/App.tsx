@@ -187,6 +187,7 @@ export default function App() {
       if (prev.has(id)) continue;
       const token = tokenMapRef.current.get(id);
       if (!token) continue;
+      if (hiddenIds.has(token.token_id)) continue;
       if (
         !matchesFilter(
           token,
@@ -211,6 +212,7 @@ export default function App() {
     excludedMarketTypes,
     numeric,
     showLive,
+    hiddenIds,
   ]);
 
   const bell = (
