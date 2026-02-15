@@ -180,6 +180,23 @@ body {
   background: var(--bg-hover);
 }
 
+.filter-reset-btn {
+  background: none;
+  border: 1px solid var(--border);
+  color: var(--text-muted);
+  font-size: 12px;
+  cursor: pointer;
+  padding: 4px 10px;
+  border-radius: 4px;
+  white-space: nowrap;
+  margin-left: auto;
+}
+
+.filter-reset-btn:hover {
+  color: var(--text);
+  border-color: var(--text-muted);
+}
+
 .chip-dropdown {
   position: relative;
 }

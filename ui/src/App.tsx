@@ -18,6 +18,35 @@ interface NumericFilters {
   maxOdds: number;
 }
 
+const FILTER_DEFAULTS = {
+  excludedSports: [] as string[],
+  excludedLeagues: [] as string[],
+  excludedMarketTypes: [] as string[],
+  moversOnly: true,
+  threshold: 3,
+  showLive: false,
+  showHidden: false,
+  minLiquidity: 10000,
+  maxSpread: 0.03,
+  minVolume: 0,
+  minOdds: 1.1,
+  maxOdds: 6.0,
+};
+
+function loadFilters(): typeof FILTER_DEFAULTS {
+  try {
+    const raw = localStorage.getItem("polydrop_filters");
+    if (raw) return { ...FILTER_DEFAULTS, ...JSON.parse(raw) };
+  } catch {
+    /* ignore */
+  }
+  return FILTER_DEFAULTS;
+}
+
+function saveFilters(state: typeof FILTER_DEFAULTS) {
+  localStorage.setItem("polydrop_filters", JSON.stringify(state));
+}
+
 function matchesFilter(
   token: Token,
   excludedSports: Set<string>,
@@ -84,27 +113,30 @@ function loadHiddenIds(): Set<string> {
 
 export default function App() {
   const notif = useNotifications();
-  const [threshold, setThreshold] = useState(3);
+  const [savedFilters] = useState(loadFilters);
+  const [threshold, setThreshold] = useState(savedFilters.threshold);
   const { tokens, connected, error, changedIds, newIds } =
     useTokenStream(threshold);
   const priceHistory = usePriceHistory(tokens);
-  const [excludedSports, setExcludedSports] = useState<Set<string>>(new Set());
+  const [excludedSports, setExcludedSports] = useState<Set<string>>(
+    new Set(savedFilters.excludedSports),
+  );
   const [excludedLeagues, setExcludedLeagues] = useState<Set<string>>(
-    new Set(),
+    new Set(savedFilters.excludedLeagues),
   );
   const [excludedMarketTypes, setExcludedMarketTypes] = useState<Set<string>>(
-    new Set(),
+    new Set(savedFilters.excludedMarketTypes),
   );
-  const [moversOnly, setMoversOnly] = useState(true);
+  const [moversOnly, setMoversOnly] = useState(savedFilters.moversOnly);
   const [showAdvanced, setShowAdvanced] = useState(false);
-  const [minLiquidity, setMinLiquidity] = useState(10000);
-  const [maxSpread, setMaxSpread] = useState(0.03);
-  const [minVolume, setMinVolume] = useState(0);
-  const [minOdds, setMinOdds] = useState(1.1);
-  const [maxOdds, setMaxOdds] = useState(6.0);
-  const [showLive, setShowLive] = useState(false);
+  const [minLiquidity, setMinLiquidity] = useState(savedFilters.minLiquidity);
+  const [maxSpread, setMaxSpread] = useState(savedFilters.maxSpread);
+  const [minVolume, setMinVolume] = useState(savedFilters.minVolume);
+  const [minOdds, setMinOdds] = useState(savedFilters.minOdds);
+  const [maxOdds, setMaxOdds] = useState(savedFilters.maxOdds);
+  const [showLive, setShowLive] = useState(savedFilters.showLive);
   const [hiddenIds, setHiddenIds] = useState<Set<string>>(loadHiddenIds);
-  const [showHidden, setShowHidden] = useState(false);
+  const [showHidden, setShowHidden] = useState(savedFilters.showHidden);
 
   const numeric = useMemo<NumericFilters>(
     () => ({
@@ -135,6 +167,53 @@ export default function App() {
       localStorage.setItem("polydrop_hidden", JSON.stringify([...next]));
       return next;
     });
+  };
+
+  // Persist filters to localStorage
+  useEffect(() => {
+    saveFilters({
+      excludedSports: [...excludedSports],
+      excludedLeagues: [...excludedLeagues],
+      excludedMarketTypes: [...excludedMarketTypes],
+      moversOnly,
+      threshold,
+      showLive,
+      showHidden,
+      minLiquidity,
+      maxSpread,
+      minVolume,
+      minOdds,
+      maxOdds,
+    });
+  }, [
+    excludedSports,
+    excludedLeagues,
+    excludedMarketTypes,
+    moversOnly,
+    threshold,
+    showLive,
+    showHidden,
+    minLiquidity,
+    maxSpread,
+    minVolume,
+    minOdds,
+    maxOdds,
+  ]);
+
+  const resetFilters = () => {
+    setExcludedSports(new Set(FILTER_DEFAULTS.excludedSports));
+    setExcludedLeagues(new Set(FILTER_DEFAULTS.excludedLeagues));
+    setExcludedMarketTypes(new Set(FILTER_DEFAULTS.excludedMarketTypes));
+    setMoversOnly(FILTER_DEFAULTS.moversOnly);
+    setThreshold(FILTER_DEFAULTS.threshold);
+    setShowLive(FILTER_DEFAULTS.showLive);
+    setShowHidden(FILTER_DEFAULTS.showHidden);
+    setMinLiquidity(FILTER_DEFAULTS.minLiquidity);
+    setMaxSpread(FILTER_DEFAULTS.maxSpread);
+    setMinVolume(FILTER_DEFAULTS.minVolume);
+    setMinOdds(FILTER_DEFAULTS.minOdds);
+    setMaxOdds(FILTER_DEFAULTS.maxOdds);
+    localStorage.removeItem("polydrop_filters");
   };
 
   const filtered = useMemo(
@@ -263,6 +342,7 @@ export default function App() {
         showHidden={showHidden}
         onShowHiddenChange={setShowHidden}
         hiddenCount={hiddenIds.size}
+        onReset={resetFilters}
       />
       <TokenTable
         tokens={filtered}

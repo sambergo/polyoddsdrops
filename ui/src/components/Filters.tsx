@@ -105,6 +105,7 @@ interface FiltersProps {
   showHidden: boolean
   onShowHiddenChange: (v: boolean) => void
   hiddenCount: number
+  onReset: () => void
 }
 
 function formatDollars(v: number): string {
@@ -141,6 +142,7 @@ export function Filters({
   showHidden,
   onShowHiddenChange,
   hiddenCount,
+  onReset,
 }: FiltersProps) {
   const sports = useMemo(
     () => [...new Set(tokens.map((t) => t.sport_label).filter(Boolean))].sort(),
@@ -302,6 +304,10 @@ export function Filters({
             />
             <span className="filter-range-value">{maxOdds.toFixed(1)}</span>
           </div>
+
+          <button className="filter-reset-btn" onClick={onReset}>
+            Reset to default
+          </button>
         </div>
       )}
     </div>
