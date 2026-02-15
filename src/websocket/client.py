@@ -181,6 +181,7 @@ class WebSocketClient:
             except Exception:
                 pass
             self._ws = None
+        self._subscribed_tokens.clear()
 
     def stop(self) -> None:
         """Signal the client to stop reconnection loop."""

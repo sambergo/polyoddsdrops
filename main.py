@@ -407,32 +407,22 @@ class Polydrop:
         # Update current tokens (reconnects will pick this up)
         self._current_tokens = new_desired
 
-        # If WebSocket is connected, apply live changes
+        # Update DB subscription state
+        self.subscription_manager.mark_subscribed(new_desired)
+        self.db.set_subscribed(new_desired, subscribed=True)
+
+        # Clean up price tracker for removed tokens
+        for tid in (old_set - set(new_desired)):
+            self.price_tracker.remove_token(tid)
+
+        # Restart pool so all clients reconnect with fresh chunks
+        # This is more reliable than live sub/unsub which can lose tokens
+        # when connection count changes or clients have stale state
         if self.ws_client.is_connected:
-            tokens_to_unsub = list(old_set - set(new_desired))
-            tokens_to_sub = list(set(new_desired) - old_set)
-
-            if tokens_to_unsub:
-                try:
-                    await self.ws_client.unsubscribe(tokens_to_unsub)
-                    self.subscription_manager.mark_unsubscribed(tokens_to_unsub)
-                    self.db.set_subscribed(tokens_to_unsub, subscribed=False)
-                    for tid in tokens_to_unsub:
-                        self.price_tracker.remove_token(tid)
-                    logger.info(f"Unsubscribed {len(tokens_to_unsub)} removed tokens")
-                except Exception:
-                    logger.exception("Failed to unsubscribe removed tokens")
-
-            if tokens_to_sub:
-                try:
-                    await self.ws_client.subscribe(tokens_to_sub)
-                    self.subscription_manager.mark_subscribed(tokens_to_sub)
-                    self.db.set_subscribed(tokens_to_sub, subscribed=True)
-                    logger.info(f"Subscribed {len(tokens_to_sub)} new tokens")
-                except Exception:
-                    logger.exception("Failed to subscribe new tokens")
+            logger.info("Restarting WebSocket pool with updated tokens")
+            self.ws_client.restart()
         else:
-            logger.info("WebSocket not connected, skipping live sub/unsub changes")
+            logger.info("WebSocket not connected, tokens updated for next reconnect")
 
         logger.info("Market refresh complete")
 

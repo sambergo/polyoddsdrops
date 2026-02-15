@@ -38,6 +38,15 @@ class WebSocketPool:
         for client in self._clients:
             client.stop()
 
+    def restart(self) -> None:
+        """Signal all clients to reconnect (pool stays running).
+
+        Clients stop their reconnect loops and the pool's outer loop
+        restarts them with fresh chunk assignments from the token getter.
+        """
+        for client in self._clients:
+            client.stop()
+
     async def disconnect(self) -> None:
         """Disconnect all clients."""
         self._running = False
@@ -49,19 +58,27 @@ class WebSocketPool:
 
     async def subscribe(self, token_ids: list[str]) -> None:
         """Subscribe to tokens across connected clients (for live updates)."""
+        if not token_ids:
+            return
         limit = self._config.max_tokens_per_connection
+        remaining = list(token_ids)
         for client in self._clients:
+            if not remaining:
+                break
             # Find tokens this client can accept
             current = len(client.subscribed_tokens)
             capacity = limit - current
             if capacity <= 0:
                 continue
-            batch = token_ids[:capacity]
-            token_ids = token_ids[capacity:]
-            if batch:
-                await client.subscribe(batch)
-            if not token_ids:
-                break
+            batch = remaining[:capacity]
+            remaining = remaining[capacity:]
+            await client.subscribe(batch)
+
+        if remaining:
+            logger.warning(
+                f"Pool has no capacity for {len(remaining)} tokens — "
+                f"will be picked up on next reconnect"
+            )
 
     async def unsubscribe(self, token_ids: list[str]) -> None:
         """Unsubscribe tokens from whichever client holds them."""
