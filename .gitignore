@@ -175,8 +175,21 @@ pyrightconfig.json
 
 # End of https://www.toptal.com/developers/gitignore/api/python
 
-# Project data
+# Project-specific
 data/
-/ui/.vite/deps
+*.db
+*.db-shm
+*.db-wal
+
+# UI
+ui/node_modules/
+ui/dist/
+ui/.vite/
+
+# Environment
+.env.production
+
+# IDE
+.vscode/
+.idea/
 /docs
-/.env.production
