@@ -101,7 +101,7 @@ export default function App() {
   const [minLiquidity, setMinLiquidity] = useState(10000);
   const [maxSpread, setMaxSpread] = useState(0.03);
   const [minVolume, setMinVolume] = useState(0);
-  const [minPrice, setMinPrice] = useState(0.05);
+  const [minPrice, setMinPrice] = useState(0.15);
   const [maxPrice, setMaxPrice] = useState(0.95);
   const [showLive, setShowLive] = useState(false);
   const [hiddenIds, setHiddenIds] = useState<Set<string>>(loadHiddenIds);
