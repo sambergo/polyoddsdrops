@@ -66,7 +66,7 @@ class ApiConfig:
 
     host: str = "0.0.0.0"
     port: int = 3565
-    sse_interval: float = 1.0  # seconds between SSE pushes
+    sse_interval: float = 3.0  # seconds between SSE pushes
 
 
 @dataclass

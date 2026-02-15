@@ -9,6 +9,7 @@ from pathlib import Path
 import redis
 import uvicorn
 from fastapi import FastAPI, HTTPException
+from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 from sse_starlette.sse import EventSourceResponse
@@ -37,6 +38,7 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title="Polydrop", lifespan=lifespan)
+app.add_middleware(GZipMiddleware, minimum_size=500)
 
 
 def _get_redis() -> redis.Redis:
@@ -81,18 +83,55 @@ async def get_tokens():
 
 @app.get("/api/tokens/stream")
 async def token_stream():
-    """SSE endpoint — streams full token state every N seconds."""
+    """SSE endpoint — streams only changed tokens (delta updates)."""
     r = _get_redis()
     interval = config.api.sse_interval
 
     async def event_generator():
+        # Track updated_at per token to detect changes
+        last_seen: dict[str, str] = {}
+
         while True:
             try:
                 tokens = _get_all_tokens(r)
-                yield {
-                    "event": "tokens",
-                    "data": json.dumps(tokens),
-                }
+
+                # First iteration: send full state
+                if not last_seen:
+                    for t in tokens:
+                        last_seen[t.get("token_id", "")] = t.get("updated_at", "")
+                    yield {
+                        "event": "tokens",
+                        "data": json.dumps(tokens),
+                    }
+                else:
+                    # Subsequent: only send tokens whose updated_at changed
+                    current_ids = set()
+                    changed = []
+                    for t in tokens:
+                        tid = t.get("token_id", "")
+                        current_ids.add(tid)
+                        updated = t.get("updated_at", "")
+                        if last_seen.get(tid) != updated:
+                            changed.append(t)
+                            last_seen[tid] = updated
+
+                    # Detect removed tokens
+                    removed = [tid for tid in last_seen if tid not in current_ids]
+                    for tid in removed:
+                        del last_seen[tid]
+
+                    # Only send if there are changes
+                    if changed or removed:
+                        payload: dict = {}
+                        if changed:
+                            payload["updated"] = changed
+                        if removed:
+                            payload["removed"] = removed
+                        yield {
+                            "event": "delta",
+                            "data": json.dumps(payload),
+                        }
+
             except redis.RedisError as e:
                 logger.warning(f"SSE Redis read failed: {e}")
                 yield {

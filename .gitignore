@@ -179,3 +179,4 @@ pyrightconfig.json
 data/
 /ui/.vite/deps
 /docs
+/.env.production

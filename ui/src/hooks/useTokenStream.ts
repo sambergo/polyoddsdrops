@@ -83,6 +83,24 @@ export function useTokenStream(dropThreshold: number): TokenStreamState {
     return () => clearInterval(id)
   }, [computeNewIds])
 
+  // Ref to hold the latest full token map for merging deltas
+  const tokenMapRef = useRef<Map<string, TokenRaw>>(new Map())
+
+  const applyDelta = useCallback((delta: { updated?: TokenRaw[]; removed?: string[] }) => {
+    const map = tokenMapRef.current
+    if (delta.updated) {
+      for (const t of delta.updated) {
+        map.set(t.token_id, t)
+      }
+    }
+    if (delta.removed) {
+      for (const id of delta.removed) {
+        map.delete(id)
+      }
+    }
+    processTokens(Array.from(map.values()), false)
+  }, [processTokens])
+
   useEffect(() => {
     let es: EventSource | null = null
     let retryTimeout: ReturnType<typeof setTimeout> | null = null
@@ -90,14 +108,28 @@ export function useTokenStream(dropThreshold: number): TokenStreamState {
     function connect() {
       es = new EventSource('/api/tokens/stream')
 
+      // Full state on first SSE message
       es.addEventListener('tokens', (e) => {
         try {
           const data = JSON.parse(e.data) as TokenRaw[]
+          tokenMapRef.current = new Map(data.map((t) => [t.token_id, t]))
           processTokens(data, false)
           setConnected(true)
           setError(null)
         } catch {
           setError('Failed to parse SSE data')
+        }
+      })
+
+      // Delta updates (only changed/removed tokens)
+      es.addEventListener('delta', (e) => {
+        try {
+          const delta = JSON.parse(e.data) as { updated?: TokenRaw[]; removed?: string[] }
+          applyDelta(delta)
+          setConnected(true)
+          setError(null)
+        } catch {
+          setError('Failed to parse SSE delta')
         }
       })
 
@@ -113,6 +145,7 @@ export function useTokenStream(dropThreshold: number): TokenStreamState {
     fetch('/api/tokens')
       .then((r) => r.json())
       .then((data: TokenRaw[]) => {
+        tokenMapRef.current = new Map(data.map((t) => [t.token_id, t]))
         processTokens(data, true)
         connect()
       })
@@ -125,7 +158,7 @@ export function useTokenStream(dropThreshold: number): TokenStreamState {
       es?.close()
       if (retryTimeout) clearTimeout(retryTimeout)
     }
-  }, [processTokens])
+  }, [processTokens, applyDelta])
 
   return { tokens, connected, error, changedIds, newIds }
 }
