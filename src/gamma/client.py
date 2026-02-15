@@ -301,8 +301,12 @@ class GammaClient:
                     line = market.get("line")
 
                     # Create a FetchedMarket for each token
+                    # Skip "No" tokens in binary markets - they're redundant
+                    # and cause inverted odds display
                     for i, token_id in enumerate(token_ids):
                         outcome = outcomes[i] if i < len(outcomes) else f"Outcome {i}"
+                        if outcome.lower() == "no":
+                            continue
                         price = prices[i] if i < len(prices) else 0.0
 
                         all_markets.append(
@@ -394,8 +398,12 @@ class GammaClient:
                 line = market.get("line")
 
                 # Create a FetchedMarket for each token
+                # Skip "No" tokens in binary markets - they're redundant
+                # and cause inverted odds display
                 for i, token_id in enumerate(token_ids):
                     outcome = outcomes[i] if i < len(outcomes) else f"Outcome {i}"
+                    if outcome.lower() == "no":
+                        continue
                     price = prices[i] if i < len(prices) else 0.0
 
                     all_markets.append(
