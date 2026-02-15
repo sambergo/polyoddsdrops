@@ -31,7 +31,9 @@ uv sync
 uv run python main.py
 ```
 
-The web UI is served at `http://localhost:8000` (built automatically on startup if [bun](https://bun.sh) is installed).
+**Web UI:** [https://polyoddsdrops.com](https://polyoddsdrops.com) (or `http://localhost:3565` when running locally)
+
+The dashboard is built automatically on startup if [bun](https://bun.sh) is installed.
 
 ## Configuration
 
