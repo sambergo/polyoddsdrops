@@ -216,30 +216,41 @@ export default function App() {
     localStorage.removeItem("polydrop_filters");
   };
 
-  const filtered = useMemo(
-    () =>
-      tokens.filter((t) => {
-        if (!showHidden && hiddenIds.has(t.token_id)) return false;
-        return matchesFilter(
-          t,
-          excludedSports,
-          excludedLeagues,
-          excludedMarketTypes,
-          numeric,
-          showLive,
-        );
-      }),
-    [
-      tokens,
-      excludedSports,
-      excludedLeagues,
-      excludedMarketTypes,
-      numeric,
-      showLive,
-      hiddenIds,
-      showHidden,
-    ],
-  );
+  const dropSeenAt = useRef<Map<string, number>>(new Map());
+
+  const filtered = useMemo(() => {
+    const result = tokens.filter((t) => {
+      if (!showHidden && hiddenIds.has(t.token_id)) return false;
+      return matchesFilter(
+        t,
+        excludedSports,
+        excludedLeagues,
+        excludedMarketTypes,
+        numeric,
+        showLive,
+      );
+    });
+    const now = Date.now();
+    const currentIds = new Set(result.map((t) => t.token_id));
+    // Remove tokens no longer in filtered results
+    for (const id of dropSeenAt.current.keys()) {
+      if (!currentIds.has(id)) dropSeenAt.current.delete(id);
+    }
+    // Record first appearance for new tokens
+    for (const id of currentIds) {
+      if (!dropSeenAt.current.has(id)) dropSeenAt.current.set(id, now);
+    }
+    return result;
+  }, [
+    tokens,
+    excludedSports,
+    excludedLeagues,
+    excludedMarketTypes,
+    numeric,
+    showLive,
+    hiddenIds,
+    showHidden,
+  ]);
 
   // Fire browser notifications for new drops that pass category filters
   const prevNewIds = useRef<Set<string>>(new Set());
@@ -351,6 +362,7 @@ export default function App() {
         priceHistory={priceHistory}
         hiddenIds={hiddenIds}
         onToggleHidden={toggleHidden}
+        dropSeenAt={dropSeenAt.current}
       />
     </Layout>
   );

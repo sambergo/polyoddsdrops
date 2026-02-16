@@ -28,6 +28,21 @@ function formatRelativeTime(unixSeconds: number): string {
   return `${days}d ${hr % 24}h`;
 }
 
+function formatRelativeTimeMs(timestampMs: number): string {
+  const diff = Date.now() - timestampMs;
+  if (diff < 0) return "—";
+  const sec = Math.floor(diff / 5000) * 5;
+  if (sec < 60) return `${sec}s`;
+  const min = Math.floor(sec / 60);
+  const remSec = sec % 60;
+  if (min < 60) return `${min}m ${remSec}s`;
+  const hr = Math.floor(min / 60);
+  const remMin = min % 60;
+  if (hr < 24) return `${hr}h ${remMin}m`;
+  const days = Math.floor(hr / 24);
+  return `${days}d ${hr % 24}h`;
+}
+
 function useTick(intervalMs: number) {
   const [tick, setTick] = useState(0);
   useEffect(() => {
@@ -151,8 +166,9 @@ const columns = [
     },
   }),
   col.accessor("first_seen", {
+    id: "drop_seen",
     header: "Seen",
-    cell: (info) => formatRelativeTime(info.getValue()),
+    cell: () => "—",
   }),
   col.accessor("updated_at", {
     header: "Updated",
@@ -191,9 +207,10 @@ interface TokenTableProps {
   priceHistory: Map<string, PricePoint[]>;
   hiddenIds: Set<string>;
   onToggleHidden: (tokenId: string) => void;
+  dropSeenAt: Map<string, number>;
 }
 
-export function TokenTable({ tokens, changedIds, newIds, priceHistory, hiddenIds, onToggleHidden }: TokenTableProps) {
+export function TokenTable({ tokens, changedIds, newIds, priceHistory, hiddenIds, onToggleHidden, dropSeenAt }: TokenTableProps) {
   const [sorting, setSorting] = useState<SortingState>([
     { id: "odds_change", desc: false },
   ]);
@@ -224,9 +241,25 @@ export function TokenTable({ tokens, changedIds, newIds, priceHistory, hiddenIds
           );
         },
       }),
-      ...columns,
+      ...columns.map((c) => {
+        if (c.id === "drop_seen") {
+          return col.accessor(
+            (row) => dropSeenAt.get(row.token_id) ?? Infinity,
+            {
+              id: "drop_seen",
+              header: "Seen",
+              cell: (info) => {
+                const ts = dropSeenAt.get(info.row.original.token_id);
+                if (ts == null) return "—";
+                return formatRelativeTimeMs(ts);
+              },
+            },
+          );
+        }
+        return c;
+      }),
     ],
-    [hiddenIds, onToggleHidden],
+    [hiddenIds, onToggleHidden, dropSeenAt],
   );
 
   const table = useReactTable({
