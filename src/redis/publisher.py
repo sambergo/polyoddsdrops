@@ -124,6 +124,17 @@ class RedisPublisher:
                         "observation_count": str(velocity.observation_count),
                     }
                 )
+            else:
+                data.update(
+                    {
+                        "oldest_price": "",
+                        "newest_price": "",
+                        "price_change": "0",
+                        "pct_change": "0",
+                        "elapsed_seconds": "0",
+                        "observation_count": "0",
+                    }
+                )
 
             pipe = self._client.pipeline()
             pipe.hset(token_key, mapping=data)
