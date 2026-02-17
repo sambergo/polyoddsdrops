@@ -216,6 +216,22 @@ export default function App() {
     localStorage.removeItem("polydrop_filters");
   };
 
+  // Purge stale hidden IDs once per session (tokens no longer served)
+  const hasPurgedHidden = useRef(false);
+  useEffect(() => {
+    if (hasPurgedHidden.current || tokens.length === 0) return;
+    hasPurgedHidden.current = true;
+    const activeIds = new Set(tokens.map((t) => t.token_id));
+    const stale = [...hiddenIds].filter((id) => !activeIds.has(id));
+    if (stale.length === 0) return;
+    setHiddenIds((prev) => {
+      const next = new Set(prev);
+      stale.forEach((id) => next.delete(id));
+      localStorage.setItem("polydrop_hidden", JSON.stringify([...next]));
+      return next;
+    });
+  }, [tokens, hiddenIds]);
+
   const dropSeenAt = useRef<Map<string, number>>(new Map());
 
   const filtered = useMemo(() => {
