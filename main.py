@@ -176,6 +176,11 @@ class Polydrop:
                         f"Price change: {token_id[:20]}... mid={mid_price:.4f}"
                     )
 
+        # Calculate live spread from order book
+        live_spread: float | None = None
+        if best_bid is not None and best_ask is not None and best_bid > 0:
+            live_spread = best_ask - best_bid
+
         # Publish to Redis for web UI
         if mid_price is not None:
             market = self.db.get_market(token_id)
@@ -187,10 +192,11 @@ class Polydrop:
                 best_bid=best_bid,
                 best_ask=best_ask,
                 velocity=velocity,
+                live_spread=live_spread,
             )
 
         # Check for alerts after price update
-        await self._check_and_alert(token_id)
+        await self._check_and_alert(token_id, live_spread)
 
         # Log stats periodically
         now = time.time()
@@ -224,14 +230,17 @@ class Polydrop:
                     f"({v.velocity.pct_change:+.2f}% in {v.velocity.elapsed_seconds:.1f}s)"
                 )
 
-    async def _check_and_alert(self, token_id: str) -> None:
+    async def _check_and_alert(
+        self, token_id: str, live_spread: float | None = None
+    ) -> None:
         """Check if a token's price movement triggers an alert.
 
-        Checks velocity threshold, cooldown, and deduplication before
+        Checks velocity threshold, spread, cooldown, and deduplication before
         sending alerts.
 
         Args:
             token_id: The token to check.
+            live_spread: Real-time spread from order book.
         """
         # Get velocity data
         velocity = self.price_tracker.get_velocity(token_id)
@@ -245,6 +254,14 @@ class Polydrop:
         # Check threshold
         pct_change = velocity.velocity.pct_change
         if abs(pct_change) < self.config.alert.threshold_pct:
+            return
+
+        # Check live spread - reject alerts for tokens with wide spreads
+        if live_spread is not None and live_spread > self.config.filter.max_spread:
+            logger.debug(
+                f"Alert for {token_id[:20]}... skipped - "
+                f"live spread {live_spread:.4f} > {self.config.filter.max_spread}"
+            )
             return
 
         # Get market metadata (needed for live check and alert context)

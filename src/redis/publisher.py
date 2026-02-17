@@ -52,6 +52,7 @@ class RedisPublisher:
         best_bid: float | None = None,
         best_ask: float | None = None,
         velocity: VelocityResult | None = None,
+        live_spread: float | None = None,
     ) -> None:
         """Write current token state to Redis hash.
 
@@ -62,6 +63,7 @@ class RedisPublisher:
             best_bid: Current best bid.
             best_ask: Current best ask.
             velocity: Current velocity data from price tracker.
+            live_spread: Real-time spread from order book (best_ask - best_bid).
         """
         if not self._available or not self._client:
             return
@@ -99,9 +101,13 @@ class RedisPublisher:
                         "liquidity": str(market.liquidity)
                         if market.liquidity is not None
                         else "",
-                        "spread": str(market.spread)
-                        if market.spread is not None
-                        else "",
+                        "spread": str(live_spread)
+                        if live_spread is not None
+                        else (
+                            str(market.spread)
+                            if market.spread is not None
+                            else ""
+                        ),
                         "volume_24h": str(market.volume_24h)
                         if market.volume_24h is not None
                         else "",
