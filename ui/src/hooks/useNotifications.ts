@@ -1,6 +1,11 @@
 import { useCallback, useEffect, useState } from 'react'
 import type { Token } from '../types'
 
+function toEuropeanOdds(price: number | null | undefined): string {
+  if (price == null || price <= 0 || price >= 1) return '—'
+  return (1 / price).toFixed(2)
+}
+
 const STORAGE_KEY = 'polydrop-notifications'
 
 interface NotificationSettings {
@@ -71,7 +76,7 @@ export function useNotifications(): NotificationState {
     const pct = token.pct_change ?? 0
     const sign = pct >= 0 ? '+' : ''
     new Notification(`${token.outcome} ${sign}${pct.toFixed(1)}%`, {
-      body: `${token.event_title}\n${token.mid_price?.toFixed(2) ?? '—'}¢`,
+      body: `${token.event_title}\n${toEuropeanOdds(token.oldest_price)} → ${toEuropeanOdds(token.mid_price)}`,
       tag: token.token_id,
     })
   }, [settings.enabled, permission])
