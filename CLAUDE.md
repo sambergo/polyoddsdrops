@@ -10,16 +10,25 @@ Polydrop is a Polymarket odds dropper for sports markets - monitors sharp price 
 
 ```bash
 # Run the application
-uv run python main.py              # Start monitoring (connects to WebSocket, tracks prices)
+uv run python main.py              # Start monitoring (WS + API server + UI)
 
-# Discovery scripts (Phase 1)
+# Web UI (React/TypeScript/Vite, requires bun)
+cd ui && bun install                  # Install frontend deps
+cd ui && bun run build                # Build to ui/dist/ (served by FastAPI)
+cd ui && bun run dev                  # Dev server with hot reload
+
+# Deployment
+./deploy.sh <host>                    # rsync + docker compose up (or set DEPLOY_HOST)
+docker compose up -d --build          # Local Docker (app + Redis + Caddy)
+
+# Discovery scripts
 uv run scripts/fetch_markets.py       # Fetch markets from CLOB/Gamma APIs
 uv run scripts/find_sports_markets.py # Discover sports markets by tag
 uv run scripts/explore_websocket.py   # Explore WebSocket real-time feeds
 
 # Database inspection
-sqlite3 data/polydrop.db ".tables"              # List tables
-sqlite3 data/polydrop.db "SELECT COUNT(*) FROM markets"  # Count markets
+sqlite3 data/polydrop.db ".tables"
+sqlite3 data/polydrop.db "SELECT COUNT(*) FROM markets"
 
 # Add dependencies (never edit pyproject.toml directly)
 uv add <package>
@@ -42,35 +51,51 @@ POLYDROP_LOG_LEVEL=INFO                  # Logging level
 
 ```
 src/
-├── __init__.py
 ├── config.py              # Configuration (env vars, defaults)
+├── api/
+│   └── server.py          # FastAPI: /api/tokens, /api/tokens/stream (SSE), static UI
+├── redis/
+│   └── publisher.py       # Publishes live token state to Redis hashes
 ├── db/
-│   ├── __init__.py
 │   ├── models.py          # MarketRow, AlertRow dataclasses
 │   └── database.py        # SQLite operations
 ├── websocket/
-│   ├── __init__.py
 │   ├── messages.py        # Parse book, price_change messages
 │   └── client.py          # WebSocket connection manager
 ├── monitoring/
-│   ├── __init__.py
 │   ├── rolling_window.py  # In-memory price window
 │   ├── price_tracker.py   # Multi-token price tracking
 │   └── subscription.py    # Token subscription management
 └── gamma/
-    ├── __init__.py
     └── client.py          # Gamma API for fetching markets
+
+ui/                        # React 19 + TypeScript + Vite dashboard
+├── src/
+│   ├── components/        # TokenTable, Filters, PriceChart, NotificationBell
+│   └── hooks/             # useTokenStream (SSE), useNotifications, usePriceHistory
+└── dist/                  # Built output, served by FastAPI at /
 ```
 
 ## Architecture
 
 ```
-Polymarket WS ──▶ Detection Engine ──▶ Redis ──▶ Web UI
-(price feeds)     (velocity check)          (SSE)
+Polymarket WS ──▶ Detection Engine ──▶ Redis ──▶ FastAPI (SSE) ──▶ React UI
+(price feeds)     (velocity check)                /api/tokens/stream
                         │
                     SQLite
                 (markets, alerts)
 ```
+
+**main.py orchestrates three concurrent asyncio tasks:**
+1. WebSocket pool with auto-reconnect (subscribes to token price feeds)
+2. Market refresh loop (periodic re-fetch from Gamma API)
+3. FastAPI/Uvicorn server (serves API + static UI)
+
+**API endpoints** (`src/api/server.py`):
+- `GET /api/tokens` - Full token list from Redis
+- `GET /api/tokens/stream` - SSE with delta-only updates
+- `GET /api/tokens/{token_id}` - Single token details
+- `GET /` - Serves React build from `ui/dist/`
 
 **Two Polymarket APIs:**
 - **Gamma API** (`gamma-api.polymarket.com`) - Discovery & metadata (events, sports tags)
@@ -114,6 +139,9 @@ Event (Gamma) → Markets[] → Tokens (clobTokenIds)
 
 - In-memory rolling window for velocity detection (no price snapshots in DB)
 - SQLite for market metadata and alert history only
-- Manual token configuration initially (dynamic subscriptions in Phase 5)
-- Components decoupled for future multi-user expansion
+- Redis for live token state (hashes per token, TTL-based expiry); app degrades gracefully without it
+- SSE with delta-only updates (client receives only changed tokens, not full snapshots)
+- UI auto-builds on startup if `bun` is available
+- Docker Compose for deployment: app + Redis + Caddy reverse proxy
+- No test framework currently configured
 
