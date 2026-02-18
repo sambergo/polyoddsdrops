@@ -205,12 +205,12 @@ interface TokenTableProps {
   changedIds: Set<string>;
   newIds: Set<string>;
   priceHistory: Map<string, PricePoint[]>;
-  hiddenIds: Set<string>;
-  onToggleHidden: (tokenId: string) => void;
+  hiddenEvents: Set<string>;
+  onToggleHiddenEvent: (eventSlug: string) => void;
   dropSeenAt: Map<string, number>;
 }
 
-export function TokenTable({ tokens, changedIds, newIds, priceHistory, hiddenIds, onToggleHidden, dropSeenAt }: TokenTableProps) {
+export function TokenTable({ tokens, changedIds, newIds, priceHistory, hiddenEvents, onToggleHiddenEvent, dropSeenAt }: TokenTableProps) {
   const [sorting, setSorting] = useState<SortingState>([
     { id: "odds_change", desc: false },
   ]);
@@ -225,15 +225,15 @@ export function TokenTable({ tokens, changedIds, newIds, priceHistory, hiddenIds
         id: "hide",
         header: "",
         cell: (info) => {
-          const id = info.row.original.token_id;
-          const isHidden = hiddenIds.has(id);
+          const slug = info.row.original.event_slug;
+          const isHidden = slug ? hiddenEvents.has(slug) : false;
           return (
             <button
               className={`hide-btn ${isHidden ? "hide-btn-restore" : ""}`}
-              title={isHidden ? "Unhide" : "Hide"}
+              title={isHidden ? "Unhide event" : "Hide event"}
               onClick={(e) => {
                 e.stopPropagation();
-                onToggleHidden(id);
+                if (slug) onToggleHiddenEvent(slug);
               }}
             >
               {isHidden ? "↩" : "✕"}
@@ -259,7 +259,7 @@ export function TokenTable({ tokens, changedIds, newIds, priceHistory, hiddenIds
         return c;
       }),
     ],
-    [hiddenIds, onToggleHidden, dropSeenAt],
+    [hiddenEvents, onToggleHiddenEvent, dropSeenAt],
   );
 
   const table = useReactTable({
@@ -308,7 +308,7 @@ export function TokenTable({ tokens, changedIds, newIds, priceHistory, hiddenIds
                   changedIds.has(row.id) ? "flash" : "",
                   newIds.has(row.id) ? "new-row" : "",
                   expandedId === row.id ? "expanded" : "",
-                  hiddenIds.has(row.id) ? "hidden-row" : "",
+                  hiddenEvents.has(row.original.event_slug) ? "hidden-row" : "",
                 ].join(" ")}
               >
                 {row.getVisibleCells().map((cell) => (

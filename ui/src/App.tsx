@@ -101,9 +101,9 @@ function playDropSound() {
   }
 }
 
-function loadHiddenIds(): Set<string> {
+function loadHiddenEvents(): Set<string> {
   try {
-    const raw = localStorage.getItem("polydrop_hidden");
+    const raw = localStorage.getItem("polydrop_hidden_events");
     if (raw) return new Set(JSON.parse(raw));
   } catch {
     /* ignore */
@@ -135,7 +135,7 @@ export default function App() {
   const [minOdds, setMinOdds] = useState(savedFilters.minOdds);
   const [maxOdds, setMaxOdds] = useState(savedFilters.maxOdds);
   const [showLive, setShowLive] = useState(savedFilters.showLive);
-  const [hiddenIds, setHiddenIds] = useState<Set<string>>(loadHiddenIds);
+  const [hiddenEvents, setHiddenEvents] = useState<Set<string>>(loadHiddenEvents);
   const [showHidden, setShowHidden] = useState(savedFilters.showHidden);
 
   const numeric = useMemo<NumericFilters>(
@@ -159,12 +159,13 @@ export default function App() {
     ],
   );
 
-  const toggleHidden = (tokenId: string) => {
-    setHiddenIds((prev) => {
+  const toggleHiddenEvent = (eventSlug: string) => {
+    if (!eventSlug) return;
+    setHiddenEvents((prev) => {
       const next = new Set(prev);
-      if (next.has(tokenId)) next.delete(tokenId);
-      else next.add(tokenId);
-      localStorage.setItem("polydrop_hidden", JSON.stringify([...next]));
+      if (next.has(eventSlug)) next.delete(eventSlug);
+      else next.add(eventSlug);
+      localStorage.setItem("polydrop_hidden_events", JSON.stringify([...next]));
       return next;
     });
   };
@@ -216,27 +217,27 @@ export default function App() {
     localStorage.removeItem("polydrop_filters");
   };
 
-  // Purge stale hidden IDs once per session (tokens no longer served)
+  // Purge stale hidden events once per session (no tokens with that slug)
   const hasPurgedHidden = useRef(false);
   useEffect(() => {
     if (hasPurgedHidden.current || tokens.length === 0) return;
     hasPurgedHidden.current = true;
-    const activeIds = new Set(tokens.map((t) => t.token_id));
-    const stale = [...hiddenIds].filter((id) => !activeIds.has(id));
+    const activeSlugs = new Set(tokens.map((t) => t.event_slug));
+    const stale = [...hiddenEvents].filter((s) => !activeSlugs.has(s));
     if (stale.length === 0) return;
-    setHiddenIds((prev) => {
+    setHiddenEvents((prev) => {
       const next = new Set(prev);
-      stale.forEach((id) => next.delete(id));
-      localStorage.setItem("polydrop_hidden", JSON.stringify([...next]));
+      stale.forEach((s) => next.delete(s));
+      localStorage.setItem("polydrop_hidden_events", JSON.stringify([...next]));
       return next;
     });
-  }, [tokens, hiddenIds]);
+  }, [tokens, hiddenEvents]);
 
   const dropSeenAt = useRef<Map<string, number>>(new Map());
 
   const filtered = useMemo(() => {
     const result = tokens.filter((t) => {
-      if (!showHidden && hiddenIds.has(t.token_id)) return false;
+      if (!showHidden && t.event_slug && hiddenEvents.has(t.event_slug)) return false;
       return matchesFilter(
         t,
         excludedSports,
@@ -264,7 +265,7 @@ export default function App() {
     excludedMarketTypes,
     numeric,
     showLive,
-    hiddenIds,
+    hiddenEvents,
     showHidden,
   ]);
 
@@ -292,7 +293,7 @@ export default function App() {
       if (prev.has(id)) continue;
       const token = tokenMapRef.current.get(id);
       if (!token) continue;
-      if (hiddenIds.has(token.token_id)) continue;
+      if (token.event_slug && hiddenEvents.has(token.event_slug)) continue;
       if (
         !matchesFilter(
           token,
@@ -317,7 +318,7 @@ export default function App() {
     excludedMarketTypes,
     numeric,
     showLive,
-    hiddenIds,
+    hiddenEvents,
   ]);
 
   const bell = (
@@ -368,7 +369,7 @@ export default function App() {
         onShowLiveChange={setShowLive}
         showHidden={showHidden}
         onShowHiddenChange={setShowHidden}
-        hiddenCount={hiddenIds.size}
+        hiddenCount={hiddenEvents.size}
         onReset={resetFilters}
       />
       <TokenTable
@@ -376,8 +377,8 @@ export default function App() {
         changedIds={changedIds}
         newIds={newIds}
         priceHistory={priceHistory}
-        hiddenIds={hiddenIds}
-        onToggleHidden={toggleHidden}
+        hiddenEvents={hiddenEvents}
+        onToggleHiddenEvent={toggleHiddenEvent}
         dropSeenAt={dropSeenAt.current}
       />
     </Layout>
