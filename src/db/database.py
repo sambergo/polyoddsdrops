@@ -50,6 +50,15 @@ CREATE TABLE IF NOT EXISTS alerts (
 -- Index for alert deduplication queries
 CREATE INDEX IF NOT EXISTS idx_alerts_token_detected
     ON alerts(token_id, detected_at);
+
+-- page_visits: UI load tracking for usage analytics
+CREATE TABLE IF NOT EXISTS page_visits (
+    id       INTEGER PRIMARY KEY AUTOINCREMENT,
+    ts       TEXT NOT NULL,
+    ip_hash  TEXT NOT NULL,
+    path     TEXT NOT NULL DEFAULT '/'
+);
+CREATE INDEX IF NOT EXISTS idx_pv_ts ON page_visits(ts);
 """
 
 
@@ -102,6 +111,7 @@ class Database:
                 logger.info(f"Added column {col_name} to markets table")
 
         self._conn.commit()
+        self.prune_old_visits()
 
     @property
     def conn(self) -> sqlite3.Connection:
@@ -286,3 +296,34 @@ class Database:
             time_window_seconds=row["time_window_seconds"],
             detected_at=row["detected_at"],
         )
+
+    # Analytics operations
+
+    def log_visit(self, ip_hash: str, path: str) -> None:
+        """Record a page visit."""
+        self.conn.execute(
+            "INSERT INTO page_visits (ts, ip_hash, path) VALUES (datetime('now'), ?, ?)",
+            (ip_hash, path),
+        )
+        self.conn.commit()
+
+    def get_daily_stats(self, days: int = 30) -> list[dict]:
+        """Return daily hit counts and unique visitor counts."""
+        rows = self.conn.execute(
+            f"""
+            SELECT substr(ts, 1, 10) AS date,
+                   COUNT(*) AS hits,
+                   COUNT(DISTINCT ip_hash) AS unique_visitors
+            FROM page_visits
+            WHERE ts >= datetime('now', '-{days} days')
+            GROUP BY date ORDER BY date DESC
+            """
+        ).fetchall()
+        return [{"date": r["date"], "hits": r["hits"], "unique_visitors": r["unique_visitors"]} for r in rows]
+
+    def prune_old_visits(self, days: int = 90) -> None:
+        """Delete page visit records older than N days."""
+        self.conn.execute(
+            f"DELETE FROM page_visits WHERE ts < datetime('now', '-{days} days')"
+        )
+        self.conn.commit()

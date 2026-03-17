@@ -1,6 +1,7 @@
 """FastAPI SSE server that reads token state from Redis and streams to browser."""
 
 import asyncio
+import hashlib
 import json
 import logging
 from contextlib import asynccontextmanager
@@ -8,23 +9,25 @@ from pathlib import Path
 
 import redis
 import uvicorn
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 from sse_starlette.sse import EventSourceResponse
 
 from ..config import Config
+from ..db.database import Database
 
 logger = logging.getLogger(__name__)
 
 config = Config.from_env()
 _redis: redis.Redis | None = None
+_db: Database | None = None
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    global _redis
+    global _redis, _db
     try:
         _redis = redis.from_url(config.redis.url, decode_responses=True)
         _redis.ping()
@@ -32,13 +35,28 @@ async def lifespan(app: FastAPI):
     except redis.RedisError as e:
         logger.error(f"Cannot connect to Redis: {e}")
         _redis = None
+    _db = Database(config.db_path)
+    _db.connect()
     yield
     if _redis:
         _redis.close()
+    if _db:
+        _db.close()
 
 
 app = FastAPI(title="Polydrop", lifespan=lifespan)
 app.add_middleware(GZipMiddleware, minimum_size=500)
+
+
+@app.middleware("http")
+async def track_page_views(request: Request, call_next):
+    response = await call_next(request)
+    if request.method == "GET" and request.url.path in ("/", "/index.html"):
+        ip = request.client.host if request.client else ""
+        ip_hash = hashlib.sha256(ip.encode()).hexdigest()[:12]
+        if _db:
+            _db.log_visit(ip_hash, request.url.path)
+    return response
 
 
 def _get_redis() -> redis.Redis:
@@ -142,6 +160,14 @@ async def token_stream():
             await asyncio.sleep(interval)
 
     return EventSourceResponse(event_generator())
+
+
+@app.get("/api/stats")
+async def get_stats():
+    """Get daily page visit stats for the last 30 days."""
+    if _db is None:
+        raise HTTPException(status_code=503, detail="DB unavailable")
+    return JSONResponse(content=_db.get_daily_stats(30))
 
 
 @app.get("/api/tokens/{token_id}")
