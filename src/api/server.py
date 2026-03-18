@@ -52,7 +52,7 @@ app.add_middleware(GZipMiddleware, minimum_size=500)
 async def track_page_views(request: Request, call_next):
     response = await call_next(request)
     if request.method == "GET" and request.url.path in ("/", "/index.html"):
-        ip = request.client.host if request.client else ""
+        ip = request.headers.get("x-forwarded-for", "").split(",")[0].strip() or (request.client.host if request.client else "")
         ip_hash = hashlib.sha256(ip.encode()).hexdigest()[:12]
         if _db:
             _db.log_visit(ip_hash, request.url.path)
