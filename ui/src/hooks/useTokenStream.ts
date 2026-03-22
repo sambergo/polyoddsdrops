@@ -104,6 +104,14 @@ export function useTokenStream(dropThreshold: number): TokenStreamState {
   useEffect(() => {
     let es: EventSource | null = null
     let retryTimeout: ReturnType<typeof setTimeout> | null = null
+    let errorBannerTimeout: ReturnType<typeof setTimeout> | null = null
+
+    function clearErrorBannerTimeout() {
+      if (errorBannerTimeout) {
+        clearTimeout(errorBannerTimeout)
+        errorBannerTimeout = null
+      }
+    }
 
     function connect() {
       es = new EventSource('/api/tokens/stream')
@@ -114,6 +122,7 @@ export function useTokenStream(dropThreshold: number): TokenStreamState {
           const data = JSON.parse(e.data) as TokenRaw[]
           tokenMapRef.current = new Map(data.map((t) => [t.token_id, t]))
           processTokens(data, false)
+          clearErrorBannerTimeout()
           setConnected(true)
           setError(null)
         } catch {
@@ -126,6 +135,7 @@ export function useTokenStream(dropThreshold: number): TokenStreamState {
         try {
           const delta = JSON.parse(e.data) as { updated?: TokenRaw[]; removed?: string[] }
           applyDelta(delta)
+          clearErrorBannerTimeout()
           setConnected(true)
           setError(null)
         } catch {
@@ -135,7 +145,11 @@ export function useTokenStream(dropThreshold: number): TokenStreamState {
 
       es.addEventListener('error', () => {
         setConnected(false)
-        setError('Connection lost, retrying...')
+        // Only show error banner after 8s grace period — transient network
+        // changes (ERR_NETWORK_CHANGED) reconnect quickly and shouldn't flash UI
+        errorBannerTimeout = setTimeout(() => {
+          setError('Connection lost, retrying...')
+        }, 8000)
         es?.close()
         retryTimeout = setTimeout(connect, 3000)
       })
@@ -157,6 +171,7 @@ export function useTokenStream(dropThreshold: number): TokenStreamState {
     return () => {
       es?.close()
       if (retryTimeout) clearTimeout(retryTimeout)
+      clearErrorBannerTimeout()
     }
   }, [processTokens, applyDelta])
 
