@@ -319,7 +319,14 @@ class Database:
             GROUP BY date ORDER BY date DESC
             """
         ).fetchall()
-        return [{"date": r["date"], "hits": r["hits"], "unique_visitors": r["unique_visitors"]} for r in rows]
+        return [
+            {
+                "date": r["date"],
+                "hits": r["hits"],
+                "unique_visitors": r["unique_visitors"],
+            }
+            for r in rows
+        ]
 
     def prune_old_visits(self, days: int = 90) -> None:
         """Delete page visit records older than N days."""

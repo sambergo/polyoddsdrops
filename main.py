@@ -64,7 +64,9 @@ def _build_ui() -> None:
             timeout=120,
         )
         if result.returncode != 0:
-            logger.warning(f"UI build failed (exit {result.returncode}): {result.stderr}")
+            logger.warning(
+                f"UI build failed (exit {result.returncode}): {result.stderr}"
+            )
         else:
             logger.info("UI build complete")
     except subprocess.TimeoutExpired:
@@ -328,7 +330,9 @@ class Polydrop:
         server = uvicorn.Server(config)
         server.install_signal_handlers = lambda: None  # main.py handles signals
         self._uvicorn_server = server
-        logger.info(f"Starting API server on {self.config.api.host}:{self.config.api.port}")
+        logger.info(
+            f"Starting API server on {self.config.api.host}:{self.config.api.port}"
+        )
         await server.serve()
 
     def _fetch_markets(self) -> tuple[list, list]:
@@ -373,9 +377,7 @@ class Polydrop:
         logger.info(f"Market refresh loop started (every {interval}s)")
         while self._running:
             try:
-                await asyncio.wait_for(
-                    self._shutdown_event.wait(), timeout=interval
-                )
+                await asyncio.wait_for(self._shutdown_event.wait(), timeout=interval)
                 # Event was set → shutting down
                 break
             except asyncio.TimeoutError:
@@ -429,7 +431,7 @@ class Polydrop:
         self.db.set_subscribed(new_desired, subscribed=True)
 
         # Clean up price tracker for removed tokens
-        for tid in (old_set - set(new_desired)):
+        for tid in old_set - set(new_desired):
             self.price_tracker.remove_token(tid)
 
         # Restart pool so all clients reconnect with fresh chunks

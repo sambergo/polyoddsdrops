@@ -114,7 +114,9 @@ class Config:
         websocket_config = WebSocketConfig(
             endpoint=_require("POLYDROP_WS_ENDPOINT"),
             heartbeat_interval=int(_require("POLYDROP_WS_HEARTBEAT_INTERVAL")),
-            max_tokens_per_connection=int(_require("POLYDROP_WS_MAX_TOKENS_PER_CONNECTION")),
+            max_tokens_per_connection=int(
+                _require("POLYDROP_WS_MAX_TOKENS_PER_CONNECTION")
+            ),
             reconnect_delay=int(_require("POLYDROP_WS_RECONNECT_DELAY")),
         )
 
@@ -128,7 +130,9 @@ class Config:
             threshold_pct=float(_require("POLYDROP_ALERT_THRESHOLD_PCT")),
             cooldown_seconds=int(_require("POLYDROP_ALERT_COOLDOWN_SECONDS")),
             min_observations=int(_require("POLYDROP_ALERT_MIN_OBSERVATIONS")),
-            cutoff_before_start_seconds=int(_require("POLYDROP_ALERT_CUTOFF_BEFORE_START")),
+            cutoff_before_start_seconds=int(
+                _require("POLYDROP_ALERT_CUTOFF_BEFORE_START")
+            ),
         )
 
         redis_config = RedisConfig(
