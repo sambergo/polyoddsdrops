@@ -105,10 +105,12 @@ class WebSocketPool:
 
         def make_chunk_getter(index: int) -> Callable[[], list[str]]:
             """Create a callable that returns the chunk for connection `index`."""
+
             def get_chunk() -> list[str]:
                 ids = token_ids() if callable(token_ids) else token_ids
                 start = index * limit
                 return ids[start : start + limit]
+
             return get_chunk
 
         while self._running:
@@ -126,9 +128,7 @@ class WebSocketPool:
             ]
 
             tasks = [
-                asyncio.create_task(
-                    client.run_with_reconnect(make_chunk_getter(i))
-                )
+                asyncio.create_task(client.run_with_reconnect(make_chunk_getter(i)))
                 for i, client in enumerate(self._clients)
             ]
 

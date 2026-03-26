@@ -110,7 +110,9 @@ app.add_middleware(GZipMiddleware, minimum_size=500)
 async def track_page_views(request: Request, call_next):
     response = await call_next(request)
     if request.method == "GET" and request.url.path in ("/", "/index.html"):
-        ip = request.headers.get("x-forwarded-for", "").split(",")[0].strip() or (request.client.host if request.client else "")
+        ip = request.headers.get("x-forwarded-for", "").split(",")[0].strip() or (
+            request.client.host if request.client else ""
+        )
         ip_hash = hashlib.sha256(ip.encode()).hexdigest()[:12]
         if _db:
             _db.log_visit(ip_hash, request.url.path)
@@ -161,8 +163,10 @@ async def get_tokens():
 async def token_stream():
     """SSE endpoint — streams only changed tokens (delta updates)."""
     if _redis is None:
+
         async def _unavailable():
             yield {"event": "error", "data": json.dumps({"error": "redis_unavailable"})}
+
         return EventSourceResponse(_unavailable())
 
     q = _broadcaster.subscribe()
@@ -173,7 +177,10 @@ async def token_stream():
                 tokens = await asyncio.to_thread(_get_all_tokens, _redis)
             except redis.RedisError as e:
                 logger.warning("SSE initial fetch failed: %s", e)
-                yield {"event": "error", "data": json.dumps({"error": "redis_unavailable"})}
+                yield {
+                    "event": "error",
+                    "data": json.dumps({"error": "redis_unavailable"}),
+                }
                 return
             yield {"event": "tokens", "data": json.dumps(tokens)}
             while True:

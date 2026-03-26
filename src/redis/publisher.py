@@ -103,11 +103,7 @@ class RedisPublisher:
                         else "",
                         "spread": str(live_spread)
                         if live_spread is not None
-                        else (
-                            str(market.spread)
-                            if market.spread is not None
-                            else ""
-                        ),
+                        else (str(market.spread) if market.spread is not None else ""),
                         "volume_24h": str(market.volume_24h)
                         if market.volume_24h is not None
                         else "",

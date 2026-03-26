@@ -26,7 +26,10 @@ def get_stats(db_path: Path, days: int) -> list[dict]:
         """
     ).fetchall()
     conn.close()
-    return [{"date": r["date"], "hits": r["hits"], "unique_visitors": r["unique_visitors"]} for r in rows]
+    return [
+        {"date": r["date"], "hits": r["hits"], "unique_visitors": r["unique_visitors"]}
+        for r in rows
+    ]
 
 
 def get_alltime(db_path: Path) -> dict:
@@ -41,8 +44,12 @@ def get_alltime(db_path: Path) -> dict:
 
 def main():
     parser = argparse.ArgumentParser(description="Show Polydrop usage stats")
-    parser.add_argument("--days", type=int, default=30, help="Number of days to show (default: 30)")
-    parser.add_argument("--db", type=Path, default=Path("data/polydrop.db"), help="Path to SQLite DB")
+    parser.add_argument(
+        "--days", type=int, default=30, help="Number of days to show (default: 30)"
+    )
+    parser.add_argument(
+        "--db", type=Path, default=Path("data/polydrop.db"), help="Path to SQLite DB"
+    )
     args = parser.parse_args()
 
     if not args.db.exists():
@@ -60,10 +67,14 @@ def main():
     print(f"{'-' * col1}  {'-' * col2}  {'-' * col3}")
 
     for r in rows:
-        print(f"{r['date']:<{col1}}  {r['hits']:>{col2}}  {r['unique_visitors']:>{col3}}")
+        print(
+            f"{r['date']:<{col1}}  {r['hits']:>{col2}}  {r['unique_visitors']:>{col3}}"
+        )
 
     print(f"{'-' * col1}  {'-' * col2}  {'-' * col3}")
-    print(f"{'All-time':<{col1}}  {alltime['hits']:>{col2}}  {alltime['unique_visitors']:>{col3}}")
+    print(
+        f"{'All-time':<{col1}}  {alltime['hits']:>{col2}}  {alltime['unique_visitors']:>{col3}}"
+    )
     print()
 
 

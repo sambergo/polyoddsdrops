@@ -1,4 +1,5 @@
 """In-process SSE broadcaster — one background poller, N queue subscribers."""
+
 import asyncio
 import logging
 

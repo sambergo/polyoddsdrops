@@ -1,12 +1,12 @@
-# Polydrop
+# Polyoddsdrops — [polyoddsdrops.com](https://polyoddsdrops.com)
 
-Polymarket odds dropper for sports markets. Monitors real-time price movements on Polymarket prediction markets and alerts on sharp line moves — similar to Pinnacle odds dropper services but for crypto prediction markets.
+Polymarket odds dropper for sports markets. Monitors sharp price movements on prediction markets and alerts on significant line moves — like a Pinnacle odds dropper, but for Polymarket.
 
 ## How it works
 
 ```
-Polymarket WS ──> Detection Engine ──> Redis ──> Web UI
-(price feeds)     (velocity check)          (SSE)
+Polymarket WS ──> Detection Engine ──> Redis ──> FastAPI (SSE) ──> React UI
+(price feeds)     (velocity check)                /api/tokens/stream
                         │
                     SQLite
                 (markets, alerts)
@@ -39,21 +39,23 @@ The dashboard is built automatically on startup if [bun](https://bun.sh) is inst
 
 All settings use sensible defaults. Override via environment variables or a `.env` file:
 
-| Variable | Default | Description |
-|---|---|---|
-| `POLYDROP_DB_PATH` | `data/polydrop.db` | SQLite database path |
-| `POLYDROP_SPORTS` | `nfl,nba,nhl` | Sports to monitor (comma-separated) |
-| `POLYDROP_MIN_LIQUIDITY` | `10000` | Minimum market liquidity (USD) |
-| `POLYDROP_MAX_SPREAD` | `0.10` | Maximum bid-ask spread |
-| `POLYDROP_WINDOW_SECONDS` | `60` | Rolling window for velocity calculation |
-| `POLYDROP_LOG_LEVEL` | `INFO` | Logging level |
+| Variable                  | Default            | Description                             |
+| ------------------------- | ------------------ | --------------------------------------- |
+| `POLYDROP_DB_PATH`        | `data/polydrop.db` | SQLite database path                    |
+| `POLYDROP_SPORTS`         | `nfl,nba,nhl`      | Sports to monitor (comma-separated)     |
+| `POLYDROP_MIN_LIQUIDITY`  | `10000`            | Minimum market liquidity (USD)          |
+| `POLYDROP_MAX_SPREAD`     | `0.10`             | Maximum bid-ask spread                  |
+| `POLYDROP_WINDOW_SECONDS` | `60`               | Rolling window for velocity calculation |
+| `POLYDROP_LOG_LEVEL`      | `INFO`             | Logging level                           |
 
 ## Project structure
 
 ```
 src/
 ├── config.py              # Configuration (env vars, defaults)
-├── api/server.py          # FastAPI server + SSE
+├── api/
+│   ├── server.py          # FastAPI server + SSE endpoints
+│   └── broadcaster.py     # SSE broadcaster (delta-only updates)
 ├── db/
 │   ├── models.py          # MarketRow, AlertRow dataclasses
 │   └── database.py        # SQLite operations
@@ -65,14 +67,25 @@ src/
 │   ├── price_tracker.py   # Multi-token price tracking
 │   └── subscription.py    # Token subscription management
 ├── gamma/client.py        # Gamma API (market discovery)
-├── clob/                  # CLOB API (game start times)
-└── redis/                 # Redis publisher for web UI
-ui/                        # React + Vite dashboard
+├── clob/client.py         # CLOB API (game start times)
+├── push/client.py         # Push notifications
+└── redis/publisher.py     # Redis publisher for web UI
+ui/                        # React 19 + TypeScript + Vite dashboard
+├── src/
+│   ├── components/        # TokenTable, Filters, PriceChart, TokenDetail, NotificationBell
+│   └── hooks/             # useTokenStream (SSE), useNotifications, usePriceHistory
 scripts/                   # Discovery & exploration scripts
+```
+
+## Deployment
+
+```bash
+./deploy.sh <host>           # rsync + docker compose up (or set DEPLOY_HOST)
+docker compose up -d --build # Local Docker (app + Redis + Caddy)
 ```
 
 ## Tech stack
 
 - **Backend:** Python 3.13, FastAPI, websockets, httpx, SQLite
-- **Frontend:** React 19, Vite, TanStack Table
-- **Infra:** Redis (pub/sub for SSE), uv (package management)
+- **Frontend:** React 19, TypeScript, Vite, TanStack Table
+- **Infra:** Redis (pub/sub for SSE), uv (package management), Docker Compose, Caddy
