@@ -21,11 +21,17 @@ Polymarket WS ──> Detection Engine ──> Redis ──> FastAPI (SSE) ─�
 
 ## Quickstart
 
-Requires Python 3.13+ and [uv](https://docs.astral.sh/uv/).
+Requires:
+- [Python 3.13+](https://www.python.org/) and [uv](https://docs.astral.sh/uv/)
+- [Redis](https://redis.io/) running locally (or via Docker: `docker run -d -p 6379:6379 redis`)
+- [bun](https://bun.sh) for the web UI (auto-built on startup if present)
 
 ```bash
 # Install dependencies
 uv sync
+
+# Copy config and adjust as needed
+cp .env.example .env
 
 # Start monitoring
 uv run python main.py
@@ -33,20 +39,25 @@ uv run python main.py
 
 **Web UI:** [https://polyoddsdrops.com](https://polyoddsdrops.com) (or `http://localhost:3565` when running locally)
 
-The dashboard is built automatically on startup if [bun](https://bun.sh) is installed.
+The dashboard is built automatically on startup if bun is installed.
 
 ## Configuration
 
-All settings use sensible defaults. Override via environment variables or a `.env` file:
+Copy `.env.example` to `.env` — all variables are required. Key settings:
 
-| Variable                  | Default            | Description                             |
-| ------------------------- | ------------------ | --------------------------------------- |
-| `POLYDROP_DB_PATH`        | `data/polydrop.db` | SQLite database path                    |
-| `POLYDROP_SPORTS`         | `nfl,nba,nhl`      | Sports to monitor (comma-separated)     |
-| `POLYDROP_MIN_LIQUIDITY`  | `10000`            | Minimum market liquidity (USD)          |
-| `POLYDROP_MAX_SPREAD`     | `0.10`             | Maximum bid-ask spread                  |
-| `POLYDROP_WINDOW_SECONDS` | `60`               | Rolling window for velocity calculation |
-| `POLYDROP_LOG_LEVEL`      | `INFO`             | Logging level                           |
+| Variable                       | Default                 | Description                                    |
+| ------------------------------ | ----------------------- | ---------------------------------------------- |
+| `POLYDROP_SPORTS`              | `all`                   | Sports to monitor (`nfl,nba,nhl,mlb` or `all`) |
+| `POLYDROP_DB_PATH`             | `data/polydrop.db`      | SQLite database path                           |
+| `POLYDROP_MIN_LIQUIDITY`       | `10000`                 | Minimum market liquidity (USD)                 |
+| `POLYDROP_MAX_SPREAD`          | `0.10`                  | Maximum bid-ask spread                         |
+| `POLYDROP_WINDOW_SECONDS`      | `600`                   | Rolling window for velocity calculation        |
+| `POLYDROP_ALERT_THRESHOLD_PCT` | `7.0`                   | % price change to trigger an alert             |
+| `POLYDROP_REDIS_URL`           | `redis://localhost:6379/0` | Redis connection URL                        |
+| `POLYDROP_API_PORT`            | `3565`                  | API server port                                |
+| `POLYDROP_LOG_LEVEL`           | `INFO`                  | Logging level                                  |
+
+See `.env.example` for the full list of variables.
 
 ## Project structure
 
