@@ -17,27 +17,85 @@ from sse_starlette.sse import EventSourceResponse
 
 from ..config import Config
 from ..db.database import Database
+from .broadcaster import Broadcaster
 
 logger = logging.getLogger(__name__)
 
 config = Config.from_env()
 _redis: redis.Redis | None = None
 _db: Database | None = None
+_broadcaster: Broadcaster = Broadcaster()
+_poll_task: asyncio.Task | None = None
+
+
+async def _poll_loop() -> None:
+    """Single background task: poll Redis once per interval, broadcast deltas."""
+    interval = config.api.sse_interval
+    last_seen: dict[str, str] = {}
+
+    while True:
+        await asyncio.sleep(interval)
+        if _redis is None:
+            continue
+        try:
+            tokens = await asyncio.to_thread(_get_all_tokens, _redis)
+        except redis.RedisError as e:
+            logger.warning("SSE poll Redis error: %s", e)
+            _broadcaster.broadcast("error", json.dumps({"error": "redis_unavailable"}))
+            continue
+
+        if not last_seen:
+            # First poll: seed state, don't broadcast (new connections fetch themselves)
+            for t in tokens:
+                last_seen[t.get("token_id", "")] = t.get("updated_at", "")
+            continue
+
+        current_ids: set[str] = set()
+        changed: list[dict] = []
+        for t in tokens:
+            tid = t.get("token_id", "")
+            current_ids.add(tid)
+            updated = t.get("updated_at", "")
+            if last_seen.get(tid) != updated:
+                changed.append(t)
+                last_seen[tid] = updated
+
+        removed = [tid for tid in last_seen if tid not in current_ids]
+        for tid in removed:
+            del last_seen[tid]
+
+        if changed or removed:
+            payload: dict = {}
+            if changed:
+                payload["updated"] = changed
+            if removed:
+                payload["removed"] = removed
+            _broadcaster.broadcast("delta", json.dumps(payload))
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    global _redis, _db
+    global _redis, _db, _poll_task
     try:
         _redis = redis.from_url(config.redis.url, decode_responses=True)
         _redis.ping()
-        logger.info(f"API server connected to Redis: {config.redis.url}")
+        logger.info("API server connected to Redis: %s", config.redis.url)
     except redis.RedisError as e:
-        logger.error(f"Cannot connect to Redis: {e}")
+        logger.error("Cannot connect to Redis: %s", e)
         _redis = None
     _db = Database(config.db_path)
     _db.connect()
+
+    _poll_task = asyncio.create_task(_poll_loop(), name="sse-poll")
+
     yield
+
+    _poll_task.cancel()
+    try:
+        await _poll_task
+    except asyncio.CancelledError:
+        pass
+
     if _redis:
         _redis.close()
     if _db:
@@ -102,62 +160,27 @@ async def get_tokens():
 @app.get("/api/tokens/stream")
 async def token_stream():
     """SSE endpoint — streams only changed tokens (delta updates)."""
-    r = _get_redis()
-    interval = config.api.sse_interval
+    if _redis is None:
+        async def _unavailable():
+            yield {"event": "error", "data": json.dumps({"error": "redis_unavailable"})}
+        return EventSourceResponse(_unavailable())
+
+    q = _broadcaster.subscribe()
 
     async def event_generator():
-        # Track updated_at per token to detect changes
-        last_seen: dict[str, str] = {}
-
-        while True:
+        try:
             try:
-                tokens = _get_all_tokens(r)
-
-                # First iteration: send full state
-                if not last_seen:
-                    for t in tokens:
-                        last_seen[t.get("token_id", "")] = t.get("updated_at", "")
-                    yield {
-                        "event": "tokens",
-                        "data": json.dumps(tokens),
-                    }
-                else:
-                    # Subsequent: only send tokens whose updated_at changed
-                    current_ids = set()
-                    changed = []
-                    for t in tokens:
-                        tid = t.get("token_id", "")
-                        current_ids.add(tid)
-                        updated = t.get("updated_at", "")
-                        if last_seen.get(tid) != updated:
-                            changed.append(t)
-                            last_seen[tid] = updated
-
-                    # Detect removed tokens
-                    removed = [tid for tid in last_seen if tid not in current_ids]
-                    for tid in removed:
-                        del last_seen[tid]
-
-                    # Only send if there are changes
-                    if changed or removed:
-                        payload: dict = {}
-                        if changed:
-                            payload["updated"] = changed
-                        if removed:
-                            payload["removed"] = removed
-                        yield {
-                            "event": "delta",
-                            "data": json.dumps(payload),
-                        }
-
+                tokens = await asyncio.to_thread(_get_all_tokens, _redis)
             except redis.RedisError as e:
-                logger.warning(f"SSE Redis read failed: {e}")
-                yield {
-                    "event": "error",
-                    "data": json.dumps({"error": "redis_unavailable"}),
-                }
-                break
-            await asyncio.sleep(interval)
+                logger.warning("SSE initial fetch failed: %s", e)
+                yield {"event": "error", "data": json.dumps({"error": "redis_unavailable"})}
+                return
+            yield {"event": "tokens", "data": json.dumps(tokens)}
+            while True:
+                message = await q.get()
+                yield message
+        finally:
+            _broadcaster.unsubscribe(q)
 
     return EventSourceResponse(event_generator())
 
