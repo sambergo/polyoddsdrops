@@ -13,6 +13,11 @@ from ..db.models import MarketRow
 # Parent tag for ALL sports on Polymarket
 SPORTS_PARENT_TAG = 1
 
+# Gamma currently caps /events pages at 100 items even if a larger limit is
+# requested. Keep our request aligned with that cap so pagination does not stop
+# after the first page.
+EVENTS_PAGE_LIMIT = 100
+
 logger = logging.getLogger(__name__)
 
 
@@ -209,9 +214,12 @@ class GammaClient:
         self.filter = filter_config
         self.hours_ahead = hours_ahead
 
-    def fetch_events_by_tag(self, tag_id: int, limit: int = 500) -> list[dict]:
+    def fetch_events_by_tag(
+        self, tag_id: int, limit: int = EVENTS_PAGE_LIMIT
+    ) -> list[dict]:
         """Fetch all active events filtered by tag_id, with pagination."""
         all_events: list[dict] = []
+        page_limit = min(limit, EVENTS_PAGE_LIMIT)
 
         with httpx.Client() as client:
             while True:
@@ -219,18 +227,21 @@ class GammaClient:
                     "active": "true",
                     "closed": "false",
                     "tag_id": str(tag_id),
-                    "limit": limit,
+                    "limit": page_limit,
                     "offset": str(len(all_events)),
                 }
                 resp = client.get(f"{GAMMA_HOST}/events", params=params)
                 resp.raise_for_status()
                 events = resp.json()
 
+                if not events:
+                    break
+
                 all_events.extend(events)
                 logger.debug(f"Fetched {len(events)} events (total: {len(all_events)})")
 
                 # Stop when we get fewer than limit (last page)
-                if len(events) < limit:
+                if len(events) < page_limit:
                     break
 
         return all_events
