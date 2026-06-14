@@ -4,6 +4,7 @@ import asyncio
 import hashlib
 import json
 import logging
+import time
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -26,6 +27,26 @@ _redis: redis.Redis | None = None
 _db: Database | None = None
 _broadcaster: Broadcaster = Broadcaster()
 _poll_task: asyncio.Task | None = None
+
+_RATE_LIMIT_WINDOW_SECONDS = 600
+_GLOBAL_RATE_LIMIT = 600
+_PAGE_RATE_LIMIT = 30
+_TOKENS_RATE_LIMIT = 60
+_STATS_RATE_LIMIT = 30
+_TOKEN_DETAIL_RATE_LIMIT = 120
+_SSE_ATTEMPT_RATE_LIMIT = 10
+_STATIC_RATE_LIMIT = 240
+_OTHER_RATE_LIMIT = 300
+_RATE_LIMIT_LOG_INTERVAL_SECONDS = 60
+_SSE_MAX_CONNECTIONS_PER_IP = 2
+
+_rate_limits: dict[tuple[str, str], tuple[float, int]] = {}
+_rate_limit_logs: dict[tuple[str, str], float] = {}
+_rate_limit_lock = asyncio.Lock()
+_rate_limit_last_cleanup = 0.0
+
+_sse_connections: dict[str, int] = {}
+_sse_lock = asyncio.Lock()
 
 
 async def _poll_loop() -> None:
@@ -106,13 +127,142 @@ app = FastAPI(title="Polydrop", lifespan=lifespan)
 app.add_middleware(GZipMiddleware, minimum_size=500)
 
 
+def _client_ip(request: Request) -> str:
+    forwarded_for = request.headers.get("x-forwarded-for", "")
+    if forwarded_for:
+        return forwarded_for.split(",")[0].strip()
+    if request.client:
+        return request.client.host
+    return "unknown"
+
+
+def _path_rate_limit(path: str) -> tuple[str, int]:
+    if path in ("/", "/index.html"):
+        return ("page", _PAGE_RATE_LIMIT)
+    if path == "/api/tokens":
+        return ("api_tokens", _TOKENS_RATE_LIMIT)
+    if path == "/api/tokens/stream":
+        return ("api_tokens_stream", _SSE_ATTEMPT_RATE_LIMIT)
+    if path == "/api/stats":
+        return ("api_stats", _STATS_RATE_LIMIT)
+    if path.startswith("/api/tokens/"):
+        return ("api_token_detail", _TOKEN_DETAIL_RATE_LIMIT)
+    if path.startswith("/assets/"):
+        return ("static", _STATIC_RATE_LIMIT)
+    return ("other", _OTHER_RATE_LIMIT)
+
+
+def _cleanup_rate_limits(now: float) -> None:
+    global _rate_limit_last_cleanup
+    if now - _rate_limit_last_cleanup < _RATE_LIMIT_WINDOW_SECONDS:
+        return
+
+    expired = [
+        key
+        for key, (window_start, _count) in _rate_limits.items()
+        if now - window_start >= _RATE_LIMIT_WINDOW_SECONDS
+    ]
+    for key in expired:
+        del _rate_limits[key]
+
+    old_logs = [
+        key
+        for key, last_logged in _rate_limit_logs.items()
+        if now - last_logged >= _RATE_LIMIT_WINDOW_SECONDS
+    ]
+    for key in old_logs:
+        del _rate_limit_logs[key]
+
+    _rate_limit_last_cleanup = now
+
+
+async def _consume_rate_limit(ip: str, path: str) -> tuple[str, int] | None:
+    now = time.monotonic()
+    path_scope, path_limit = _path_rate_limit(path)
+    checks = [
+        ("global", _GLOBAL_RATE_LIMIT),
+        (path_scope, path_limit),
+    ]
+
+    async with _rate_limit_lock:
+        _cleanup_rate_limits(now)
+
+        current: dict[tuple[str, str], tuple[float, int]] = {}
+        retry_after = 0
+        blocked_scope = ""
+
+        for scope, limit in checks:
+            key = (scope, ip)
+            window_start, count = _rate_limits.get(key, (now, 0))
+            if now - window_start >= _RATE_LIMIT_WINDOW_SECONDS:
+                window_start = now
+                count = 0
+            if count >= limit:
+                retry_after = max(
+                    retry_after,
+                    int(_RATE_LIMIT_WINDOW_SECONDS - (now - window_start)) + 1,
+                )
+                blocked_scope = scope
+            current[key] = (window_start, count)
+
+        if retry_after:
+            log_key = (blocked_scope, ip)
+            last_logged = _rate_limit_logs.get(log_key, 0.0)
+            if now - last_logged >= _RATE_LIMIT_LOG_INTERVAL_SECONDS:
+                logger.warning(
+                    "Rate limit exceeded: ip=%s path=%s scope=%s retry_after=%ss",
+                    ip,
+                    path,
+                    blocked_scope,
+                    retry_after,
+                )
+                _rate_limit_logs[log_key] = now
+            return blocked_scope, retry_after
+
+        for key, (window_start, count) in current.items():
+            _rate_limits[key] = (window_start, count + 1)
+
+    return None
+
+
+async def _try_open_sse(ip: str) -> bool:
+    async with _sse_lock:
+        active = _sse_connections.get(ip, 0)
+        if active >= _SSE_MAX_CONNECTIONS_PER_IP:
+            logger.warning(
+                "SSE connection limit exceeded: ip=%s active=%s limit=%s",
+                ip,
+                active,
+                _SSE_MAX_CONNECTIONS_PER_IP,
+            )
+            return False
+        _sse_connections[ip] = active + 1
+        return True
+
+
+async def _close_sse(ip: str) -> None:
+    async with _sse_lock:
+        active = _sse_connections.get(ip, 0)
+        if active <= 1:
+            _sse_connections.pop(ip, None)
+        else:
+            _sse_connections[ip] = active - 1
+
+
 @app.middleware("http")
-async def track_page_views(request: Request, call_next):
+async def rate_limit_and_track_page_views(request: Request, call_next):
+    ip = _client_ip(request)
+    limit_result = await _consume_rate_limit(ip, request.url.path)
+    if limit_result:
+        _scope, retry_after = limit_result
+        return JSONResponse(
+            status_code=429,
+            content={"detail": "Too many requests"},
+            headers={"Retry-After": str(retry_after)},
+        )
+
     response = await call_next(request)
     if request.method == "GET" and request.url.path in ("/", "/index.html"):
-        ip = request.headers.get("x-forwarded-for", "").split(",")[0].strip() or (
-            request.client.host if request.client else ""
-        )
         ip_hash = hashlib.sha256(ip.encode()).hexdigest()[:12]
         if _db:
             _db.log_visit(ip_hash, request.url.path)
@@ -160,12 +310,26 @@ async def get_tokens():
 
 
 @app.get("/api/tokens/stream")
-async def token_stream():
+async def token_stream(request: Request):
     """SSE endpoint — streams only changed tokens (delta updates)."""
+    ip = _client_ip(request)
+    if not await _try_open_sse(ip):
+        return JSONResponse(
+            status_code=429,
+            content={"detail": "Too many open streams"},
+            headers={"Retry-After": "30"},
+        )
+
     if _redis is None:
 
         async def _unavailable():
-            yield {"event": "error", "data": json.dumps({"error": "redis_unavailable"})}
+            try:
+                yield {
+                    "event": "error",
+                    "data": json.dumps({"error": "redis_unavailable"}),
+                }
+            finally:
+                await _close_sse(ip)
 
         return EventSourceResponse(_unavailable())
 
@@ -188,6 +352,7 @@ async def token_stream():
                 yield message
         finally:
             _broadcaster.unsubscribe(q)
+            await _close_sse(ip)
 
     return EventSourceResponse(event_generator())
 
