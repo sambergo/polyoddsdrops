@@ -231,6 +231,14 @@ class GammaClient:
                     "offset": str(len(all_events)),
                 }
                 resp = client.get(f"{GAMMA_HOST}/events", params=params)
+                if resp.status_code == 422 and all_events:
+                    logger.warning(
+                        "Gamma events pagination stopped at offset %s with 422; "
+                        "using %s events fetched so far",
+                        len(all_events),
+                        len(all_events),
+                    )
+                    break
                 resp.raise_for_status()
                 events = resp.json()
 
