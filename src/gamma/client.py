@@ -215,32 +215,37 @@ class GammaClient:
         self.hours_ahead = hours_ahead
 
     def fetch_events_by_tag(
-        self, tag_id: int, limit: int = EVENTS_PAGE_LIMIT
+        self,
+        tag_id: int,
+        limit: int = EVENTS_PAGE_LIMIT,
+        *,
+        start_time_min: str | None = None,
+        start_time_max: str | None = None,
     ) -> list[dict]:
-        """Fetch all active events filtered by tag_id, with pagination."""
+        """Fetch active events filtered by tag ID using keyset pagination."""
         all_events: list[dict] = []
         page_limit = min(limit, EVENTS_PAGE_LIMIT)
+        after_cursor: str | None = None
+        seen_cursors: set[str] = set()
 
         with httpx.Client() as client:
             while True:
                 params = {
-                    "active": "true",
                     "closed": "false",
                     "tag_id": str(tag_id),
                     "limit": page_limit,
-                    "offset": str(len(all_events)),
                 }
-                resp = client.get(f"{GAMMA_HOST}/events", params=params)
-                if resp.status_code == 422 and all_events:
-                    logger.warning(
-                        "Gamma events pagination stopped at offset %s with 422; "
-                        "using %s events fetched so far",
-                        len(all_events),
-                        len(all_events),
-                    )
-                    break
+                if start_time_min is not None:
+                    params["start_time_min"] = start_time_min
+                if start_time_max is not None:
+                    params["start_time_max"] = start_time_max
+                if after_cursor is not None:
+                    params["after_cursor"] = after_cursor
+
+                resp = client.get(f"{GAMMA_HOST}/events/keyset", params=params)
                 resp.raise_for_status()
-                events = resp.json()
+                payload = resp.json()
+                events = payload.get("events", [])
 
                 if not events:
                     break
@@ -248,11 +253,24 @@ class GammaClient:
                 all_events.extend(events)
                 logger.debug(f"Fetched {len(events)} events (total: {len(all_events)})")
 
-                # Stop when we get fewer than limit (last page)
-                if len(events) < page_limit:
+                next_cursor = payload.get("next_cursor")
+                if not next_cursor:
                     break
+                if next_cursor in seen_cursors:
+                    raise RuntimeError("Gamma returned a repeated events cursor")
+                seen_cursors.add(next_cursor)
+                after_cursor = next_cursor
 
         return all_events
+
+    def _upcoming_time_range(self) -> tuple[str, str]:
+        """Return the configured upcoming window in Gamma's RFC3339 format."""
+        now = datetime.now(timezone.utc)
+        cutoff = now + timedelta(hours=self.hours_ahead)
+        return (
+            now.isoformat(timespec="seconds").replace("+00:00", "Z"),
+            cutoff.isoformat(timespec="seconds").replace("+00:00", "Z"),
+        )
 
     def fetch_sports_markets(
         self, sports: list[str]
@@ -267,6 +285,7 @@ class GammaClient:
         """
         all_markets: list[FetchedMarket] = []
         total_rejections: dict[str, int] = {}
+        start_time_min, start_time_max = self._upcoming_time_range()
 
         for sport in sports:
             tag_id = SPORT_TAGS.get(sport.lower())
@@ -275,7 +294,11 @@ class GammaClient:
                 continue
 
             logger.info(f"Fetching {sport.upper()} events (tag_id={tag_id})")
-            events = self.fetch_events_by_tag(tag_id)
+            events = self.fetch_events_by_tag(
+                tag_id,
+                start_time_min=start_time_min,
+                start_time_max=start_time_max,
+            )
             logger.info(f"Found {len(events)} total events")
 
             # Filter to upcoming games
@@ -370,7 +393,12 @@ class GammaClient:
             Tuple of (filtered_markets, rejection_counts)
         """
         logger.info(f"Fetching ALL sports events (tag_id={SPORTS_PARENT_TAG})")
-        events = self.fetch_events_by_tag(SPORTS_PARENT_TAG)
+        start_time_min, start_time_max = self._upcoming_time_range()
+        events = self.fetch_events_by_tag(
+            SPORTS_PARENT_TAG,
+            start_time_min=start_time_min,
+            start_time_max=start_time_max,
+        )
         logger.info(f"Found {len(events)} total events")
 
         # Filter to upcoming games

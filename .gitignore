@@ -180,6 +180,7 @@ data/
 *.db
 *.db-shm
 *.db-wal
+Caddyfile
 
 # UI
 ui/node_modules/
