@@ -47,6 +47,7 @@ class MonitoringConfig:
     window_seconds: int
     max_data_points: int
     log_interval_seconds: int
+    process_interval_seconds: float
 
 
 @dataclass
@@ -124,7 +125,12 @@ class Config:
             window_seconds=int(_require("POLYDROP_WINDOW_SECONDS")),
             max_data_points=int(_require("POLYDROP_MAX_DATA_POINTS")),
             log_interval_seconds=int(_require("POLYDROP_LOG_INTERVAL_SECONDS")),
+            process_interval_seconds=float(
+                _require("POLYDROP_PROCESS_INTERVAL_SECONDS")
+            ),
         )
+        if monitoring_config.process_interval_seconds <= 0:
+            raise RuntimeError("POLYDROP_PROCESS_INTERVAL_SECONDS must be positive")
 
         alert_config = AlertConfig(
             threshold_pct=float(_require("POLYDROP_ALERT_THRESHOLD_PCT")),

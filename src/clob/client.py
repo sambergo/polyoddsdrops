@@ -42,6 +42,7 @@ class ClobClient:
         self.cache_ttl = cache_ttl_seconds
         self.live_cache_ttl = live_cache_ttl_seconds
         self._start_time_cache: dict[str, CachedStartTime] = {}
+        self._client = httpx.AsyncClient(timeout=5.0)
 
     def _is_start_time_in_past(self, start_time: str | None) -> bool:
         """Check if a start time is in the past (match has started)."""
@@ -55,7 +56,7 @@ class ClobClient:
         except (ValueError, TypeError):
             return False
 
-    def get_game_start_time(self, condition_id: str) -> str | None:
+    async def get_game_start_time(self, condition_id: str) -> str | None:
         """Get the real-time game start time for a market.
 
         This fetches from CLOB API which has the actual start time,
@@ -82,28 +83,25 @@ class ClobClient:
 
         # Fetch from API
         try:
-            with httpx.Client(timeout=5.0) as client:
-                resp = client.get(f"{CLOB_HOST}/markets/{condition_id}")
-                if resp.status_code == 200:
-                    data = resp.json()
-                    start_time = data.get("game_start_time")
-                    is_live = self._is_start_time_in_past(start_time)
+            resp = await self._client.get(f"{CLOB_HOST}/markets/{condition_id}")
+            if resp.status_code == 200:
+                data = resp.json()
+                start_time = data.get("game_start_time")
+                is_live = self._is_start_time_in_past(start_time)
 
-                    # Cache the result
-                    self._start_time_cache[condition_id] = CachedStartTime(
-                        game_start_time=start_time,
-                        is_live=is_live,
-                        fetched_at=now,
-                    )
-                    logger.debug(
-                        f"CLOB game_start_time for {condition_id[:20]}...: "
-                        f"{start_time} (live={is_live})"
-                    )
-                    return start_time
-                else:
-                    logger.warning(
-                        f"CLOB API returned {resp.status_code} for {condition_id[:20]}..."
-                    )
+                self._start_time_cache[condition_id] = CachedStartTime(
+                    game_start_time=start_time,
+                    is_live=is_live,
+                    fetched_at=now,
+                )
+                logger.debug(
+                    f"CLOB game_start_time for {condition_id[:20]}...: "
+                    f"{start_time} (live={is_live})"
+                )
+                return start_time
+            logger.warning(
+                f"CLOB API returned {resp.status_code} for {condition_id[:20]}..."
+            )
         except httpx.RequestError as e:
             logger.warning(f"CLOB API request failed for {condition_id[:20]}...: {e}")
 
@@ -116,6 +114,9 @@ class ClobClient:
     def clear_cache(self) -> None:
         """Clear the start time cache."""
         self._start_time_cache.clear()
+
+    async def close(self) -> None:
+        await self._client.aclose()
 
     def get_cache_stats(self) -> dict:
         """Get cache statistics."""

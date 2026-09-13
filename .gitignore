@@ -194,3 +194,4 @@ ui/.vite/
 .vscode/
 .idea/
 /docs
+/docker-logs.txt

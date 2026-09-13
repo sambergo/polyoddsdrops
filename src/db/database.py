@@ -177,8 +177,61 @@ class Database:
 
     def upsert_markets(self, markets: list[MarketRow]) -> None:
         """Bulk insert or update markets."""
-        for market in markets:
-            self.upsert_market(market)
+        if not markets:
+            return
+        self.conn.executemany(
+            """
+            INSERT INTO markets (
+                token_id, condition_id, question, outcome, event_title,
+                sport, league_label, sport_label, market_type, line,
+                liquidity, spread, volume_24h, is_subscribed,
+                is_active, priority, game_start_time, event_slug, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
+            ON CONFLICT(token_id) DO UPDATE SET
+                condition_id = excluded.condition_id,
+                question = excluded.question,
+                outcome = excluded.outcome,
+                event_title = excluded.event_title,
+                sport = excluded.sport,
+                league_label = excluded.league_label,
+                sport_label = excluded.sport_label,
+                market_type = excluded.market_type,
+                line = excluded.line,
+                liquidity = excluded.liquidity,
+                spread = excluded.spread,
+                volume_24h = excluded.volume_24h,
+                is_subscribed = excluded.is_subscribed,
+                is_active = excluded.is_active,
+                priority = excluded.priority,
+                game_start_time = excluded.game_start_time,
+                event_slug = excluded.event_slug,
+                updated_at = datetime('now')
+            """,
+            [
+                (
+                    market.token_id,
+                    market.condition_id,
+                    market.question,
+                    market.outcome,
+                    market.event_title,
+                    market.sport,
+                    market.league_label,
+                    market.sport_label,
+                    market.market_type,
+                    market.line,
+                    market.liquidity,
+                    market.spread,
+                    market.volume_24h,
+                    1 if market.is_subscribed else 0,
+                    1 if market.is_active else 0,
+                    market.priority,
+                    market.game_start_time,
+                    market.event_slug,
+                )
+                for market in markets
+            ],
+        )
+        self.conn.commit()
 
     def get_market(self, token_id: str) -> MarketRow | None:
         """Get a market by token ID."""

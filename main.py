@@ -27,11 +27,11 @@ import uvicorn
 from src.clob import ClobClient
 from src.config import Config
 from src.db import Database
-from src.db.models import AlertRow
+from src.db.models import AlertRow, MarketRow
 from src.gamma import GammaClient
 from src.monitoring import PriceTracker, SubscriptionManager
-from src.redis import RedisPublisher
-from src.websocket import BookMessage, PriceChangeMessage, WebSocketPool
+from src.redis import RedisPublisher, TokenUpdate
+from src.websocket import TopOfBookMessage, WebSocketPool
 
 # Configure logging
 logging.basicConfig(
@@ -99,11 +99,20 @@ class Polydrop:
         self._running = False
         self._last_stats_log = 0.0
         self._alert_cooldowns: dict[str, float] = {}
+        self._alert_tasks: dict[str, asyncio.Task] = {}
         self._current_tokens: list[str] = []
+        self._market_cache: dict[str, MarketRow] = {}
+        self._pending_updates: dict[str, TopOfBookMessage] = {}
+        self._processed_updates = 0
+        self._max_loop_lag = 0.0
+        self._last_metric_time = time.monotonic()
+        self._last_ws_messages = 0
+        self._last_ws_bytes = 0
+        self._last_processed_updates = 0
         self._shutdown_event = asyncio.Event()
         self._uvicorn_server: uvicorn.Server | None = None
 
-    def _is_live_or_near_live(
+    async def _is_live_or_near_live(
         self,
         condition_id: str | None,
         stored_start_time: str | None,
@@ -125,7 +134,7 @@ class Polydrop:
         # Also check CLOB API for real-time start time (important for
         # tennis/MMA where matches can start before scheduled time)
         if condition_id:
-            clob_time = self.clob.get_game_start_time(condition_id)
+            clob_time = await self.clob.get_game_start_time(condition_id)
             if clob_time and clob_time != stored_start_time:
                 if self._start_time_is_past_cutoff(clob_time, cutoff):
                     return True
@@ -148,75 +157,120 @@ class Polydrop:
         except (ValueError, TypeError):
             return False
 
-    async def on_message(self, msg: BookMessage | PriceChangeMessage) -> None:
-        """Handle incoming WebSocket messages."""
-        token_id = msg.asset_id
-        mid_price: float | None = None
-        best_bid: float | None = None
-        best_ask: float | None = None
+    async def on_message(self, msg: TopOfBookMessage) -> None:
+        """Keep only the latest update for each token until the next flush."""
+        if msg.asset_id and msg.asset_id in self._market_cache:
+            self._pending_updates[msg.asset_id] = msg
 
-        if isinstance(msg, BookMessage):
-            # Use mid-price from order book
-            if msg.mid_price is not None:
-                mid_price = msg.mid_price
-                best_bid = msg.best_bid
-                best_ask = msg.best_ask
-                self.price_tracker.update_price(token_id, mid_price)
-                logger.debug(f"Book update: {token_id[:20]}... mid={mid_price:.4f}")
-        elif isinstance(msg, PriceChangeMessage):
-            # For price changes, use the latest price from changes
-            if msg.changes:
-                buy_prices = [c.price for c in msg.changes if c.side == "BUY"]
-                sell_prices = [c.price for c in msg.changes if c.side == "SELL"]
+    async def _process_update_loop(self) -> None:
+        interval = self.config.monitoring.process_interval_seconds
+        next_flush = time.monotonic() + interval
+        while self._running:
+            try:
+                await asyncio.wait_for(
+                    self._shutdown_event.wait(),
+                    timeout=max(0.0, next_flush - time.monotonic()),
+                )
+                break
+            except asyncio.TimeoutError:
+                pass
 
-                if buy_prices and sell_prices:
-                    best_bid = max(buy_prices)
-                    best_ask = min(sell_prices)
-                    mid_price = (best_bid + best_ask) / 2
-                    self.price_tracker.update_price(token_id, mid_price)
-                    logger.debug(
-                        f"Price change: {token_id[:20]}... mid={mid_price:.4f}"
-                    )
+            now = time.monotonic()
+            self._max_loop_lag = max(self._max_loop_lag, max(0.0, now - next_flush))
+            next_flush = now + interval
+            await self._flush_pending_updates()
 
-        # Calculate live spread from order book
-        live_spread: float | None = None
-        if best_bid is not None and best_ask is not None and best_bid > 0:
-            live_spread = best_ask - best_bid
+            if (
+                now - self._last_stats_log
+                >= self.config.monitoring.log_interval_seconds
+            ):
+                self._last_stats_log = now
+                self._log_stats()
 
-        # Publish to Redis for web UI
-        if mid_price is not None:
-            market = self.db.get_market(token_id)
+        await self._flush_pending_updates()
+
+    async def _flush_pending_updates(self) -> None:
+        if not self._pending_updates:
+            return
+        pending, self._pending_updates = self._pending_updates, {}
+        redis_updates: list[TokenUpdate] = []
+        for token_id, message in pending.items():
+            mid_price = message.mid_price
+            live_spread = message.best_ask - message.best_bid
+            self.price_tracker.update_price(token_id, mid_price)
             velocity = self.price_tracker.get_velocity(token_id)
-            self.redis_publisher.publish_token_state(
-                token_id=token_id,
-                market=market,
-                mid_price=mid_price,
-                best_bid=best_bid,
-                best_ask=best_ask,
-                velocity=velocity,
-                live_spread=live_spread,
+            redis_updates.append(
+                TokenUpdate(
+                    token_id=token_id,
+                    market=self._market_cache.get(token_id),
+                    mid_price=mid_price,
+                    best_bid=message.best_bid,
+                    best_ask=message.best_ask,
+                    velocity=velocity,
+                    live_spread=live_spread,
+                )
             )
+            self._schedule_alert_check(token_id, live_spread)
 
-        # Check for alerts after price update
-        await self._check_and_alert(token_id, live_spread)
+        self._processed_updates += len(pending)
+        await self.redis_publisher.publish_token_states(redis_updates)
 
-        # Log stats periodically
-        now = time.time()
-        if now - self._last_stats_log >= self.config.monitoring.log_interval_seconds:
-            self._last_stats_log = now
-            self._log_stats()
+    def _schedule_alert_check(self, token_id: str, live_spread: float) -> None:
+        velocity = self.price_tracker.get_velocity(token_id)
+        if (
+            token_id in self._alert_tasks
+            or velocity is None
+            or velocity.observation_count < self.config.alert.min_observations
+            or abs(velocity.velocity.pct_change) < self.config.alert.threshold_pct
+            or live_spread > self.config.filter.max_spread
+            or time.time() - self._alert_cooldowns.get(token_id, 0)
+            < self.config.alert.cooldown_seconds
+        ):
+            return
+        task = asyncio.create_task(self._check_and_alert(token_id, live_spread))
+        self._alert_tasks[token_id] = task
+
+        def finished(done: asyncio.Task) -> None:
+            self._alert_tasks.pop(token_id, None)
+            if not done.cancelled() and (error := done.exception()):
+                logger.error("Alert check failed for %s: %s", token_id[:20], error)
+
+        task.add_done_callback(finished)
 
     def _log_stats(self) -> None:
         """Log current tracking statistics."""
         tracker_stats = self.price_tracker.get_stats()
         sub_stats = self.subscription_manager.get_stats()
+        ws_stats = self.ws_client.get_stats()
+        now = time.monotonic()
+        elapsed = max(now - self._last_metric_time, 0.001)
+        messages_per_second = (
+            ws_stats["raw_messages"] - self._last_ws_messages
+        ) / elapsed
+        megabits_per_second = (
+            (ws_stats["raw_bytes"] - self._last_ws_bytes) * 8 / 1_000_000 / elapsed
+        )
+        processed_per_second = (
+            self._processed_updates - self._last_processed_updates
+        ) / elapsed
 
         logger.info(
             f"Stats: "
             f"tracked={tracker_stats['tracked_tokens']} tokens, "
             f"updates={tracker_stats['total_updates']}, "
-            f"subscribed={sub_stats['subscribed']}/{sub_stats['available']}"
+            f"subscribed={sub_stats['subscribed']}/{sub_stats['available']}, "
+            f"feed={messages_per_second:.0f} msg/s {megabits_per_second:.2f} Mb/s, "
+            f"processed={processed_per_second:.0f} token/s, "
+            f"redis_batch={self.redis_publisher.last_batch_size} "
+            f"in {self.redis_publisher.last_batch_duration * 1000:.1f}ms, "
+            f"loop_lag_max={self._max_loop_lag * 1000:.1f}ms, "
+            f"reconnects={ws_stats['reconnects']}"
         )
+        self._last_metric_time = now
+        self._last_ws_messages = ws_stats["raw_messages"]
+        self._last_ws_bytes = ws_stats["raw_bytes"]
+        self._last_processed_updates = self._processed_updates
+        self._max_loop_lag = 0.0
 
         # Log some velocity data for debugging
         velocities = self.price_tracker.get_all_velocities()
@@ -267,12 +321,12 @@ class Polydrop:
             return
 
         # Get market metadata (needed for live check and alert context)
-        market = self.db.get_market(token_id)
+        market = self._market_cache.get(token_id)
 
         # Skip live or near-live events (no time to react)
         # Uses CLOB API for real-time start time (important for tennis/MMA
         # where matches can start before scheduled time)
-        if market and self._is_live_or_near_live(
+        if market and await self._is_live_or_near_live(
             market.condition_id, market.game_start_time
         ):
             logger.debug(
@@ -335,7 +389,7 @@ class Polydrop:
         )
         await server.serve()
 
-    def _fetch_markets(self) -> tuple[list, list]:
+    def _fetch_markets(self) -> tuple[list[MarketRow], list[str]]:
         """Fetch and filter markets from Gamma API (thread-safe, no DB access).
 
         Returns:
@@ -364,6 +418,7 @@ class Polydrop:
         """
         market_rows, token_ids = self._fetch_markets()
         self.db.upsert_markets(market_rows)
+        self._market_cache = {market.token_id: market for market in market_rows}
         logger.info(f"Stored {len(market_rows)} markets in database")
         return token_ids
 
@@ -422,6 +477,10 @@ class Polydrop:
         # Update subscription manager
         self.subscription_manager.set_available_tokens(new_token_ids)
         new_desired = self.subscription_manager.get_tokens_to_subscribe()
+        desired_set = set(new_desired)
+        for market in market_rows:
+            market.is_subscribed = market.token_id in desired_set
+        self._market_cache = {market.token_id: market for market in market_rows}
 
         # Update current tokens (reconnects will pick this up)
         self._current_tokens = new_desired
@@ -429,10 +488,12 @@ class Polydrop:
         # Update DB subscription state
         self.subscription_manager.mark_subscribed(new_desired)
         self.db.set_subscribed(new_desired, subscribed=True)
+        await self.redis_publisher.sync_tokens(new_desired)
 
         # Clean up price tracker for removed tokens
         for tid in old_set - set(new_desired):
             self.price_tracker.remove_token(tid)
+            self._pending_updates.pop(tid, None)
 
         # Restart pool so all clients reconnect with fresh chunks
         # This is more reliable than live sub/unsub which can lose tokens
@@ -460,7 +521,7 @@ class Polydrop:
             self.db.connect()
 
             # Connect to Redis (non-fatal if unavailable)
-            self.redis_publisher.connect()
+            await self.redis_publisher.connect()
 
             # Fetch and store markets
             token_ids = self.fetch_and_store_markets()
@@ -481,14 +542,19 @@ class Polydrop:
             # Mark as subscribed in database
             self.db.set_subscribed(tokens_to_subscribe, subscribed=True)
             self.subscription_manager.mark_subscribed(tokens_to_subscribe)
+            for token_id in tokens_to_subscribe:
+                if market := self._market_cache.get(token_id):
+                    market.is_subscribed = True
+            await self.redis_publisher.sync_tokens(tokens_to_subscribe)
 
             # Connect to WebSocket and start listening with auto-reconnect
             logger.info("Starting WebSocket with auto-reconnect (Ctrl+C to stop)")
-            self._last_stats_log = time.time()
+            self._last_stats_log = time.monotonic()
             self._current_tokens = tokens_to_subscribe
             await asyncio.gather(
                 self.ws_client.run_with_reconnect(lambda: self._current_tokens),
                 self._market_refresh_loop(),
+                self._process_update_loop(),
                 self._run_api_server(),
             )
 
@@ -516,7 +582,13 @@ class Polydrop:
         except asyncio.TimeoutError:
             logger.warning("WebSocket disconnect timed out")
 
-        self.redis_publisher.close()
+        for task in self._alert_tasks.values():
+            task.cancel()
+        if self._alert_tasks:
+            await asyncio.gather(*self._alert_tasks.values(), return_exceptions=True)
+        self._alert_tasks.clear()
+        await self.redis_publisher.close()
+        await self.clob.close()
         self.db.close()
 
         logger.info("Shutdown complete")
@@ -541,6 +613,9 @@ def main() -> None:
     logger.info(f"  Min liquidity: ${config.filter.min_liquidity:,.0f}")
     logger.info(f"  Max spread: {config.filter.max_spread:.2f}")
     logger.info(f"  Window: {config.monitoring.window_seconds}s")
+    logger.info(
+        f"  Processing interval: {config.monitoring.process_interval_seconds:.3f}s"
+    )
     logger.info(f"  Alert threshold: {config.alert.threshold_pct}%")
     logger.info(f"  Alert cooldown: {config.alert.cooldown_seconds}s")
     if config.refresh_interval_seconds > 0:

@@ -14,6 +14,31 @@ interface TokenStreamState {
   newIds: Set<string>
 }
 
+function hasMetadata(token: Partial<TokenRaw>): boolean {
+  return Boolean(token.question && token.event_title && token.outcome)
+}
+
+function mergeSnapshotWithNewerPrices(
+  snapshot: TokenRaw,
+  current: TokenRaw,
+): TokenRaw {
+  if (Number(current.updated_at) < Number(snapshot.updated_at)) return snapshot
+  return {
+    ...snapshot,
+    mid_price: current.mid_price,
+    best_bid: current.best_bid,
+    best_ask: current.best_ask,
+    spread: current.spread,
+    oldest_price: current.oldest_price,
+    newest_price: current.newest_price,
+    price_change: current.price_change,
+    pct_change: current.pct_change,
+    elapsed_seconds: current.elapsed_seconds,
+    observation_count: current.observation_count,
+    updated_at: current.updated_at,
+  }
+}
+
 export function useTokenStream(dropThreshold: number): TokenStreamState {
   const [tokens, setTokens] = useState<Token[]>([])
   const [connected, setConnected] = useState(false)
@@ -25,7 +50,9 @@ export function useTokenStream(dropThreshold: number): TokenStreamState {
   const newDropIds = useRef<Map<string, number>>(new Map())
   const thresholdRef = useRef(dropThreshold)
 
-  thresholdRef.current = dropThreshold
+  useEffect(() => {
+    thresholdRef.current = dropThreshold
+  }, [dropThreshold])
 
   const computeNewIds = useCallback(() => {
     const now = Date.now()
@@ -85,12 +112,59 @@ export function useTokenStream(dropThreshold: number): TokenStreamState {
 
   // Ref to hold the latest full token map for merging deltas
   const tokenMapRef = useRef<Map<string, TokenRaw>>(new Map())
+  const snapshotRefreshRef = useRef<Promise<void> | null>(null)
+  const lastSnapshotRefreshRef = useRef(0)
 
-  const applyDelta = useCallback((delta: { updated?: TokenRaw[]; removed?: string[] }) => {
+  const refreshSnapshot = useCallback(() => {
+    const now = Date.now()
+    if (snapshotRefreshRef.current || now - lastSnapshotRefreshRef.current < 5000) {
+      return
+    }
+    lastSnapshotRefreshRef.current = now
+    snapshotRefreshRef.current = fetch('/api/tokens')
+      .then((response) => {
+        if (!response.ok) throw new Error(`Snapshot request failed: ${response.status}`)
+        return response.json() as Promise<TokenRaw[]>
+      })
+      .then((snapshot) => {
+        const merged = new Map(snapshot.map((token) => [token.token_id, token]))
+        for (const [tokenId, current] of tokenMapRef.current) {
+          const fromSnapshot = merged.get(tokenId)
+          if (!fromSnapshot) merged.set(tokenId, current)
+          else merged.set(tokenId, mergeSnapshotWithNewerPrices(fromSnapshot, current))
+        }
+        tokenMapRef.current = merged
+        processTokens(Array.from(merged.values()), true)
+      })
+      .catch(() => {
+        // A later delta retries after the short cooldown.
+      })
+      .finally(() => {
+        snapshotRefreshRef.current = null
+      })
+  }, [processTokens])
+
+  const applyDelta = useCallback((delta: { updated?: (Partial<TokenRaw> & Pick<TokenRaw, 'token_id'>)[]; removed?: string[] }) => {
     const map = tokenMapRef.current
+    let needsSnapshotRefresh = false
     if (delta.updated) {
       for (const t of delta.updated) {
-        map.set(t.token_id, t)
+        const existing = map.get(t.token_id)
+        if ((!existing || !hasMetadata(existing)) && !hasMetadata(t)) {
+          needsSnapshotRefresh = true
+          if (!existing) continue
+        }
+        if (!existing) {
+          map.set(t.token_id, t as TokenRaw)
+          continue
+        }
+        if (
+          t.updated_at !== undefined &&
+          Number(t.updated_at) < Number(existing.updated_at)
+        ) {
+          continue
+        }
+        map.set(t.token_id, { ...existing, ...t })
       }
     }
     if (delta.removed) {
@@ -99,7 +173,8 @@ export function useTokenStream(dropThreshold: number): TokenStreamState {
       }
     }
     processTokens(Array.from(map.values()), false)
-  }, [processTokens])
+    if (needsSnapshotRefresh) refreshSnapshot()
+  }, [processTokens, refreshSnapshot])
 
   useEffect(() => {
     let es: EventSource | null = null
@@ -121,7 +196,8 @@ export function useTokenStream(dropThreshold: number): TokenStreamState {
         try {
           const data = JSON.parse(e.data) as TokenRaw[]
           tokenMapRef.current = new Map(data.map((t) => [t.token_id, t]))
-          processTokens(data, false)
+          processTokens(data, true)
+          if (data.some((token) => !hasMetadata(token))) refreshSnapshot()
           clearErrorBannerTimeout()
           setConnected(true)
           setError(null)
@@ -133,7 +209,10 @@ export function useTokenStream(dropThreshold: number): TokenStreamState {
       // Delta updates (only changed/removed tokens)
       es.addEventListener('delta', (e) => {
         try {
-          const delta = JSON.parse(e.data) as { updated?: TokenRaw[]; removed?: string[] }
+          const delta = JSON.parse(e.data) as {
+            updated?: (Partial<TokenRaw> & Pick<TokenRaw, 'token_id'>)[]
+            removed?: string[]
+          }
           applyDelta(delta)
           clearErrorBannerTimeout()
           setConnected(true)
@@ -155,25 +234,15 @@ export function useTokenStream(dropThreshold: number): TokenStreamState {
       })
     }
 
-    // Initial fetch then connect SSE
-    fetch('/api/tokens')
-      .then((r) => r.json())
-      .then((data: TokenRaw[]) => {
-        tokenMapRef.current = new Map(data.map((t) => [t.token_id, t]))
-        processTokens(data, true)
-        connect()
-      })
-      .catch(() => {
-        setError('Failed to load initial data, retrying...')
-        retryTimeout = setTimeout(connect, 3000)
-      })
+    // The SSE endpoint sends one full snapshot followed by delta batches.
+    connect()
 
     return () => {
       es?.close()
       if (retryTimeout) clearTimeout(retryTimeout)
       clearErrorBannerTimeout()
     }
-  }, [processTokens, applyDelta])
+  }, [processTokens, applyDelta, refreshSnapshot])
 
   return { tokens, connected, error, changedIds, newIds }
 }

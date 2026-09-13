@@ -17,7 +17,7 @@ Polymarket WS ──> Detection Engine ──> Redis ──> FastAPI (SSE) ─�
 3. Subscribes to real-time WebSocket price feeds
 4. Tracks price velocity using an in-memory rolling window
 5. Fires alerts when price movement exceeds configured thresholds
-6. Publishes state to Redis for the web dashboard (SSE)
+6. Coalesces updates into 500 ms batches and publishes Redis/SSE deltas
 
 ## Quickstart
 
@@ -52,6 +52,7 @@ Copy `.env.example` to `.env` — all variables are required. Key settings:
 | `POLYDROP_MIN_LIQUIDITY`       | `10000`                 | Minimum market liquidity (USD)                 |
 | `POLYDROP_MAX_SPREAD`          | `0.10`                  | Maximum bid-ask spread                         |
 | `POLYDROP_WINDOW_SECONDS`      | `600`                   | Rolling window for velocity calculation        |
+| `POLYDROP_PROCESS_INTERVAL_SECONDS` | `0.5`             | Feed coalescing interval in seconds             |
 | `POLYDROP_ALERT_THRESHOLD_PCT` | `7.0`                   | % price change to trigger an alert             |
 | `POLYDROP_REDIS_URL`           | `redis://localhost:6379/0` | Redis connection URL                        |
 | `POLYDROP_API_PORT`            | `3565`                  | API server port                                |

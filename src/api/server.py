@@ -8,7 +8,7 @@ import time
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-import redis
+import redis.asyncio as redis
 import uvicorn
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.gzip import GZipMiddleware
@@ -26,7 +26,9 @@ config = Config.from_env()
 _redis: redis.Redis | None = None
 _db: Database | None = None
 _broadcaster: Broadcaster = Broadcaster()
-_poll_task: asyncio.Task | None = None
+_update_task: asyncio.Task | None = None
+_metrics_task: asyncio.Task | None = None
+_pubsub: redis.client.PubSub | None = None
 
 _RATE_LIMIT_WINDOW_SECONDS = 600
 _GLOBAL_RATE_LIMIT = 600
@@ -49,76 +51,61 @@ _sse_connections: dict[str, int] = {}
 _sse_lock = asyncio.Lock()
 
 
-async def _poll_loop() -> None:
-    """Single background task: poll Redis once per interval, broadcast deltas."""
-    interval = config.api.sse_interval
-    last_seen: dict[str, str] = {}
+async def _update_loop(pubsub: redis.client.PubSub) -> None:
+    """Forward Redis Pub/Sub delta batches to connected SSE clients."""
+    try:
+        async for message in pubsub.listen():
+            if message.get("type") == "message":
+                _broadcaster.broadcast("delta", message["data"])
+    except asyncio.CancelledError:
+        raise
+    except redis.RedisError as exc:
+        logger.warning("Redis update listener failed: %s", exc)
+        _broadcaster.broadcast("error", json.dumps({"error": "redis_unavailable"}))
 
+
+async def _metrics_loop() -> None:
     while True:
-        await asyncio.sleep(interval)
-        if _redis is None:
-            continue
-        try:
-            tokens = await asyncio.to_thread(_get_all_tokens, _redis)
-        except redis.RedisError as e:
-            logger.warning("SSE poll Redis error: %s", e)
-            _broadcaster.broadcast("error", json.dumps({"error": "redis_unavailable"}))
-            continue
-
-        if not last_seen:
-            # First poll: seed state, don't broadcast (new connections fetch themselves)
-            for t in tokens:
-                last_seen[t.get("token_id", "")] = t.get("updated_at", "")
-            continue
-
-        current_ids: set[str] = set()
-        changed: list[dict] = []
-        for t in tokens:
-            tid = t.get("token_id", "")
-            current_ids.add(tid)
-            updated = t.get("updated_at", "")
-            if last_seen.get(tid) != updated:
-                changed.append(t)
-                last_seen[tid] = updated
-
-        removed = [tid for tid in last_seen if tid not in current_ids]
-        for tid in removed:
-            del last_seen[tid]
-
-        if changed or removed:
-            payload: dict = {}
-            if changed:
-                payload["updated"] = changed
-            if removed:
-                payload["removed"] = removed
-            _broadcaster.broadcast("delta", json.dumps(payload))
+        await asyncio.sleep(config.monitoring.log_interval_seconds)
+        logger.info("API metrics: sse_clients=%d", _broadcaster.subscriber_count)
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    global _redis, _db, _poll_task
+    global _redis, _db, _update_task, _metrics_task, _pubsub
     try:
         _redis = redis.from_url(config.redis.url, decode_responses=True)
-        _redis.ping()
+        await _redis.ping()
         logger.info("API server connected to Redis: %s", config.redis.url)
+        _pubsub = _redis.pubsub()
+        await _pubsub.subscribe(f"{config.redis.prefix}:updates")
+        _update_task = asyncio.create_task(_update_loop(_pubsub), name="redis-updates")
     except redis.RedisError as e:
         logger.error("Cannot connect to Redis: %s", e)
         _redis = None
     _db = Database(config.db_path)
     _db.connect()
-
-    _poll_task = asyncio.create_task(_poll_loop(), name="sse-poll")
+    _metrics_task = asyncio.create_task(_metrics_loop(), name="api-metrics")
 
     yield
 
-    _poll_task.cancel()
-    try:
-        await _poll_task
-    except asyncio.CancelledError:
-        pass
+    if _update_task:
+        _update_task.cancel()
+        try:
+            await _update_task
+        except asyncio.CancelledError:
+            pass
+    if _metrics_task:
+        _metrics_task.cancel()
+        try:
+            await _metrics_task
+        except asyncio.CancelledError:
+            pass
+    if _pubsub:
+        await _pubsub.aclose()
 
     if _redis:
-        _redis.close()
+        await _redis.aclose()
     if _db:
         _db.close()
 
@@ -275,17 +262,17 @@ def _get_redis() -> redis.Redis:
     return _redis
 
 
-def _get_all_tokens(r: redis.Redis) -> list[dict]:
+async def _get_all_tokens(r: redis.Redis) -> list[dict]:
     """Read all token hashes from Redis."""
     prefix = config.redis.prefix
-    token_ids = r.smembers(f"{prefix}:tokens")
+    token_ids = await r.smembers(f"{prefix}:tokens")
     if not token_ids:
         return []
 
     pipe = r.pipeline()
     for tid in token_ids:
         pipe.hgetall(f"{prefix}:token:{tid}")
-    results = pipe.execute()
+    results = await pipe.execute()
 
     tokens = []
     for data in results:
@@ -294,10 +281,10 @@ def _get_all_tokens(r: redis.Redis) -> list[dict]:
     return tokens
 
 
-def _get_single_token(r: redis.Redis, token_id: str) -> dict | None:
+async def _get_single_token(r: redis.Redis, token_id: str) -> dict | None:
     """Read a single token hash from Redis."""
     prefix = config.redis.prefix
-    data = r.hgetall(f"{prefix}:token:{token_id}")
+    data = await r.hgetall(f"{prefix}:token:{token_id}")
     return data if data else None
 
 
@@ -305,7 +292,7 @@ def _get_single_token(r: redis.Redis, token_id: str) -> dict | None:
 async def get_tokens():
     """Get all tracked tokens (initial load)."""
     r = _get_redis()
-    tokens = _get_all_tokens(r)
+    tokens = await _get_all_tokens(r)
     return JSONResponse(content=tokens)
 
 
@@ -338,7 +325,7 @@ async def token_stream(request: Request):
     async def event_generator():
         try:
             try:
-                tokens = await asyncio.to_thread(_get_all_tokens, _redis)
+                tokens = await _get_all_tokens(_redis)
             except redis.RedisError as e:
                 logger.warning("SSE initial fetch failed: %s", e)
                 yield {
@@ -369,7 +356,7 @@ async def get_stats():
 async def get_token(token_id: str):
     """Get a single token's full state."""
     r = _get_redis()
-    data = _get_single_token(r, token_id)
+    data = await _get_single_token(r, token_id)
     if data is None:
         raise HTTPException(status_code=404, detail="Token not found")
     return JSONResponse(content=data)

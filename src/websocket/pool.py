@@ -26,6 +26,24 @@ class WebSocketPool:
         self._on_message = on_message
         self._clients: list[WebSocketClient] = []
         self._running = False
+        self._raw_messages = 0
+        self._raw_bytes = 0
+        self._reconnects = 0
+
+    def _record_frame(self, size: int) -> None:
+        self._raw_messages += 1
+        self._raw_bytes += size
+
+    def _record_reconnect(self) -> None:
+        self._reconnects += 1
+
+    def get_stats(self) -> dict[str, int]:
+        return {
+            "raw_messages": self._raw_messages,
+            "raw_bytes": self._raw_bytes,
+            "reconnects": self._reconnects,
+            "connections": len(self._clients),
+        }
 
     @property
     def is_connected(self) -> bool:
@@ -123,7 +141,12 @@ class WebSocketPool:
             )
 
             self._clients = [
-                WebSocketClient(config=self._config, on_message=self._on_message)
+                WebSocketClient(
+                    config=self._config,
+                    on_message=self._on_message,
+                    on_frame=self._record_frame,
+                    on_reconnect=self._record_reconnect,
+                )
                 for _ in range(num_connections)
             ]
 

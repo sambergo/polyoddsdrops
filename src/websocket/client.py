@@ -10,12 +10,14 @@ from websockets.asyncio.client import ClientConnection, connect
 from websockets.exceptions import ConnectionClosed
 
 from ..config import WebSocketConfig
-from .messages import BookMessage, PriceChangeMessage, parse_message
+from .messages import TopOfBookMessage, parse_message
 
 logger = logging.getLogger(__name__)
 
 # Type alias for message handlers
-MessageHandler = Callable[[BookMessage | PriceChangeMessage], Awaitable[None]]
+MessageHandler = Callable[[TopOfBookMessage], Awaitable[None]]
+FrameHandler = Callable[[int], None]
+ReconnectHandler = Callable[[], None]
 
 
 class WebSocketClient:
@@ -25,6 +27,8 @@ class WebSocketClient:
         self,
         config: WebSocketConfig,
         on_message: MessageHandler | None = None,
+        on_frame: FrameHandler | None = None,
+        on_reconnect: ReconnectHandler | None = None,
     ) -> None:
         """Initialize the WebSocket client.
 
@@ -34,6 +38,8 @@ class WebSocketClient:
         """
         self.config = config
         self.on_message = on_message
+        self.on_frame = on_frame
+        self.on_reconnect = on_reconnect
         self._ws: ClientConnection | None = None
         self._heartbeat_task: asyncio.Task | None = None
         self._subscribed_tokens: set[str] = set()
@@ -124,7 +130,9 @@ class WebSocketClient:
 
         while self._running:
             try:
-                raw = await asyncio.wait_for(self._ws.recv(), timeout=1.0)
+                raw = await self._ws.recv()
+                if self.on_frame:
+                    self.on_frame(len(raw))
 
                 # Handle PONG
                 if raw == "PONG":
@@ -140,9 +148,6 @@ class WebSocketClient:
                         except Exception as e:
                             logger.error(f"Error in message handler: {e}")
 
-            except asyncio.TimeoutError:
-                # No message received, continue loop
-                continue
             except ConnectionClosed as e:
                 logger.warning(f"WebSocket connection closed: {e}")
                 break  # Exit listen loop, run_with_reconnect will handle reconnection
@@ -215,6 +220,8 @@ class WebSocketClient:
                 await self._cleanup_connection()
 
             if self._running:
+                if self.on_reconnect:
+                    self.on_reconnect()
                 delay = min(self.config.reconnect_delay * (2**retry_count), max_delay)
                 retry_count += 1
                 logger.info(f"Reconnecting in {delay}s (attempt {retry_count})...")

@@ -1,7 +1,7 @@
 """WebSocket client module for Polydrop."""
 
 from .client import WebSocketClient
-from .messages import BookMessage, PriceChangeMessage, parse_message
+from .messages import BookMessage, PriceChangeMessage, TopOfBookMessage, parse_message
 from .pool import WebSocketPool
 
 __all__ = [
@@ -9,5 +9,6 @@ __all__ = [
     "WebSocketPool",
     "BookMessage",
     "PriceChangeMessage",
+    "TopOfBookMessage",
     "parse_message",
 ]
